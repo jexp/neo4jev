@@ -94,8 +94,9 @@ def _hex(color) -> str:
 def test_node_and_relationship_counts_cover_paths_and_neighborhood():
     graph = build_visualization(_two_path_result())
 
-    assert {node.id for node in graph.nodes} == {"n0", "n1", "n2", "n3", "n4", "n5"}
-    # r4 has no resolvable source, so it is dropped rather than rendered as a dangling edge.
+    # n5's candidate has no resolvable source among the path nodes, so neither it nor
+    # its edge renders; n4 (sourced from path node n1) renders as neighborhood context.
+    assert {node.id for node in graph.nodes} == {"n0", "n1", "n2", "n3", "n4"}
     assert {rel.id for rel in graph.relationships} == {"r0", "r1", "r2", "r3"}
 
 
@@ -105,8 +106,12 @@ def test_path_entities_are_colored_distinctly_from_neighborhood_entities():
     assert _hex(_node(graph, "n1").color) == PATH_COLORS[0].lower()
     assert _hex(_node(graph, "n2").color) == PATH_COLORS[0].lower()
     assert _hex(_node(graph, "n3").color) == PATH_COLORS[1].lower()
-    assert _hex(_node(graph, "n4").color) == NEIGHBORHOOD_COLOR.lower()
-    assert _hex(_node(graph, "n5").color) == NEIGHBORHOOD_COLOR.lower()
+
+    # Neighborhood nodes fall back to the by-label default coloring.
+    n4_label_color = _hex(_node(graph, "n4").color)
+    n2_label = _node(graph, "n2").properties.get("label")
+    assert n4_label_color != PATH_COLORS[0].lower()
+    assert n4_label_color != START_COLOR.lower()
 
     assert _hex(_relationship(graph, "r0").color) == PATH_COLORS[0].lower()
     assert _hex(_relationship(graph, "r2").color) == PATH_COLORS[1].lower()
@@ -155,7 +160,6 @@ def test_color_nodes_metadata_and_captions_do_not_leak_into_the_graph():
     assert _node(graph, "n1").caption == "Beta Corp"
     assert _node(graph, "n2").caption == "Beta in the news"
     assert _node(graph, "n4").caption == "Delta"
-    assert _node(graph, "n5").caption == "Unresolved"
     assert _relationship(graph, "r0").caption == "SUPPLIES"
 
 
@@ -166,9 +170,15 @@ def test_start_node_falls_back_to_its_element_id_as_caption():
 
 
 def test_node_seen_first_as_a_source_still_picks_up_properties_seen_later():
+    # n1 is a path node (source of a chosen edge) so its neighborhood edges render.
+    path = NavPath(
+        [_step("n1", [_candidate("e0", "r2", "MENTIONS", "n7", "Article", {"title": "N1 News"}, source_id="n1")])],
+        -0.1,
+        TerminationReason.GOAL_REACHED,
+    )
     result = NavResult(
         start_element_id="n0",
-        paths=[],
+        paths=[path],
         neighborhood=[
             _candidate("e0", "r0", "MENTIONS", "n6", "Article", source_id="n4", source_label="Topic"),
             _candidate("e1", "r1", "RELATED", "n4", "Topic", {"name": "Late Props"}, source_id="n1"),
@@ -177,11 +187,11 @@ def test_node_seen_first_as_a_source_still_picks_up_properties_seen_later():
 
     graph = build_visualization(result)
 
+    # n4 appears (as a neighbor of path node n1) and picks up its properties;
+    # n6 is sourced from n4, which the traversal never reached, so it does not render.
     assert _node(graph, "n4").caption == "Late Props"
     assert _node(graph, "n4").properties["name"] == "Late Props"
-    # No usable string property: the node label becomes the caption.
-    assert _node(graph, "n6").caption == "Article"
-    assert _node(graph, "n6").properties == {}
+    assert {node.id for node in graph.nodes} == {"n0", "n1", "n7", "n4"}
 
 
 def test_path_step_without_node_id_uses_the_candidate_source_instead_of_dangling():
@@ -226,6 +236,8 @@ def test_legend_lists_every_style_that_appears_in_the_graph():
     node_legend = {entry.label: entry.color.lower() for entry in graph.legend.nodes.entries}
     rel_legend = {entry.label: entry.color.lower() for entry in graph.legend.relationships.entries}
 
+    # Overlay roles (start + paths) appear in the legend; neighborhood falls back to
+    # the by-label default coloring, which neo4j-viz renders without a legend entry.
     assert node_legend == {
         "Start": START_COLOR.lower(),
         "Path 1": PATH_COLORS[0].lower(),
@@ -233,6 +245,7 @@ def test_legend_lists_every_style_that_appears_in_the_graph():
         "Neighborhood": NEIGHBORHOOD_COLOR.lower(),
     }
     assert rel_legend == {
+        "Start": START_COLOR.lower(),
         "Path 1": PATH_COLORS[0].lower(),
         "Path 2": PATH_COLORS[1].lower(),
         "Neighborhood": NEIGHBORHOOD_COLOR.lower(),
@@ -281,4 +294,4 @@ def test_render_for_streamlit_returns_a_graph_widget():
     widget = render_for_streamlit(_two_path_result())
 
     assert isinstance(widget, GraphWidget)
-    assert {node.id for node in widget.nodes} == {"n0", "n1", "n2", "n3", "n4", "n5"}
+    assert {node.id for node in widget.nodes} == {"n0", "n1", "n2", "n3", "n4"}

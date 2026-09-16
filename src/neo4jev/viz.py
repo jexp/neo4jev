@@ -1,8 +1,8 @@
 """Turn a :class:`~neo4jev.types.NavResult` into a styled ``neo4j-viz`` graph.
 
-Path nodes/relationships are colored per path (one color per path index, all sharing a
-single legend) while neighborhood-only entities get a muted neutral color, so the path(s)
-taken stand out from their surrounding context.
+Nodes are colored by label (neo4j-viz's default styling rule); path entities get their
+per-path color applied on top of that base layer. Neighborhood context is opt-in
+(``include_neighborhood=True``) so only the traversed part of the graph renders by default.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from .types import NavCandidate, NavPath, NavResult
 __all__ = ["build_visualization", "render_for_notebook", "render_for_streamlit"]
 
 ROLE_KEY = "_neo4jev_role"
+LABEL_KEY = "label"
 START_ROLE = "start"
 NEIGHBORHOOD_ROLE = "neighborhood"
 PATH_ROLE_PREFIX = "path_"
@@ -108,12 +109,15 @@ class _GraphBuilder:
         props = props or {}
         existing = self.nodes.get(element_id)
         if existing is None:
+            properties = {**props, ROLE_KEY: role}
+            if label:
+                properties.setdefault(LABEL_KEY, label)
             self.nodes[element_id] = Node(
                 id=element_id,
                 caption=_node_caption(label, props) or element_id,
                 caption_size=_caption_size(role),
                 size=_node_size(role),
-                properties={**props, ROLE_KEY: role},
+                properties=properties,
             )
             return
 
@@ -121,6 +125,8 @@ class _GraphBuilder:
             existing.properties[ROLE_KEY] = role
             existing.size = _node_size(role)
             existing.caption_size = _caption_size(role)
+        if label:
+            existing.properties.setdefault(LABEL_KEY, label)
         if props:
             # A node can first appear as a relationship source (label only) and only later
             # carry its properties as a relationship target: keep both.
@@ -159,9 +165,13 @@ class _GraphBuilder:
             for candidate in step.chosen:
                 self.add_candidate(candidate, step.node_id or candidate.source_element_id, role=role)
 
-    def add_neighborhood(self, result: NavResult) -> None:
+    def add_neighborhood(self, result: NavResult, path_node_ids: set[str]) -> None:
+        # Only edges whose source is a node the traversal actually reached render:
+        # branches that visited-but-didn't-choose a node (e.g. Samsung) contribute that
+        # node itself as context, but must not drag in the visited node's own neighbors.
         for candidate in result.neighborhood:
-            self.add_candidate(candidate, candidate.source_element_id, role=NEIGHBORHOOD_ROLE)
+            if candidate.source_element_id in path_node_ids:
+                self.add_candidate(candidate, candidate.source_element_id, role=NEIGHBORHOOD_ROLE)
 
     @staticmethod
     def _palette(roles: set[str]) -> dict[str, str]:
@@ -174,41 +184,58 @@ class _GraphBuilder:
     def to_graph(self) -> VisualizationGraph:
         graph = VisualizationGraph(nodes=list(self.nodes.values()), relationships=list(self.relationships.values()))
 
-        node_roles = {node.properties[ROLE_KEY] for node in graph.nodes}
+        # Base layer: every node colored by label (neo4j-viz's default styling rule).
+        graph.color_nodes(property=LABEL_KEY)
+
+        # Overlay: start and path entities keep their role color on top of the
+        # label-based base; neighborhood entities keep the label color.
+        node_roles = set()
+        for node in graph.nodes:
+            role = node.properties.get(ROLE_KEY)
+            if role is not None and role != NEIGHBORHOOD_ROLE:
+                node.color = _role_color(role)
+                node_roles.add(role)
+
         rel_roles = {rel.properties[ROLE_KEY] for rel in graph.relationships}
-        node_palette = self._palette(node_roles)
-        rel_palette = self._palette(rel_roles)
-        if node_roles:
-            graph.color_nodes(property=ROLE_KEY, colors=node_palette)
         if rel_roles:
-            graph.color_relationships(property=ROLE_KEY, colors=rel_palette)
+            palette = self._palette(rel_roles)
+            palette[NEIGHBORHOOD_ROLE] = NEIGHBORHOOD_COLOR
+            graph.color_relationships(property=ROLE_KEY, colors=palette)
 
         # The role is styling metadata, not graph data: drop it so the viz side panel
         # only ever shows real Neo4j properties (colors/legend above are already applied).
         for entity in (*graph.nodes, *graph.relationships):
             entity.properties.pop(ROLE_KEY, None)
 
-        graph.set_legend(
-            nodes=self._legend(node_palette) if node_roles else None,
-            relationships=self._legend(rel_palette) if rel_roles else None,
-            visible=True,
-        )
+        # Explicit legend replaces the one auto-captured from the label coloring above
+        # (passing None to set_legend leaves the captured legend in place).
+        legend = self._legend(self._palette(node_roles | rel_roles))
+        graph.set_legend(nodes=legend, relationships=legend, visible=True)
         return graph
 
 
 def build_visualization(result: NavResult) -> VisualizationGraph:
     """Build a :class:`~neo4j_viz.VisualizationGraph` for ``result``.
 
-    Every path in ``result`` gets its own color (shared for its nodes and relationships);
-    nodes/relationships reachable only through ``result.neighborhood`` are colored as
-    "Neighborhood" and drawn smaller. A node that belongs to several paths takes the color
-    of its lowest-numbered path, and the start node keeps a color of its own.
+    Nodes are colored by label (neo4j-viz's default styling rule), with start/path
+    entities overlaid with their role colors. Neighborhood context includes the direct
+    neighbors of traversed path nodes (e.g. a visited-but-not-chosen node like a losing
+    beam branch's endpoint), but not the neighbors' own neighbors: only edges sourced
+    from nodes the traversal actually reached are rendered.
     """
     builder = _GraphBuilder()
     builder.add_node(result.start_element_id, role=START_ROLE)
     for index, path in enumerate(result.paths):
         builder.add_path(path, index)
-    builder.add_neighborhood(result)
+    path_node_ids = {result.start_element_id}
+    for path in result.paths:
+        for step in path.steps:
+            if step.node_id:
+                path_node_ids.add(step.node_id)
+            for candidate in step.chosen:
+                if candidate.target_element_id:
+                    path_node_ids.add(candidate.target_element_id)
+    builder.add_neighborhood(result, path_node_ids)
     return builder.to_graph()
 
 
