@@ -90,7 +90,7 @@ tasks:
       expected labels, detect_indexes("Organization") finds the `entity` fulltext index,
       a fulltext search for a well-known company name returns results, and
       get_outgoing_relationships on a real node returns a non-empty capped candidate list.
-    status: in_progress
+    status: completed
     dependencies:
       - task-002
       - task-003
@@ -100,7 +100,7 @@ tasks:
       - "tests/unit/test_neo4j_access_mapping.py passes with a mocked driver, no network access"
       - "tests/integration/test_neo4j_companies_kg.py passes against the live demo.neo4jlabs.com companies KG"
       - "No label, relationship type, or property name is hardcoded outside of test fixtures/docs"
-    completed_at: null
+    completed_at: 2026-09-16T01:09:10Z
 
   - id: task-005
     title: 'Implement navigator.py (TypeSafe Choice+Noul beam search, all 3 goal modes)'
