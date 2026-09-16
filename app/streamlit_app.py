@@ -24,7 +24,6 @@ from neo4jev.neo4j_access import (
     LabelIndexes,
     LookupMode,
     Neo4jAccess,
-    settings_from_env,
 )
 from neo4jev.types import (
     FreeTextGoal,
@@ -52,7 +51,7 @@ st.set_page_config(page_title="TypeSafe graph navigation", layout="wide")
 
 @st.cache_resource(show_spinner=False)
 def get_settings() -> Settings:
-    return settings_from_env()
+    return Settings.from_env(require_typesafe_key=False)
 
 
 @st.cache_resource(show_spinner=False)

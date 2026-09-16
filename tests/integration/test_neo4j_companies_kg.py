@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from neo4jev.config import Settings
-from neo4jev.neo4j_access import Neo4jAccess, open_access, settings_from_env
+from neo4jev.neo4j_access import Neo4jAccess, open_access
 
 # The Companies KG's own labels/types — used here as expectations, never as
 # application logic.
@@ -32,7 +32,7 @@ WELL_KNOWN_COMPANY = "Apple"
 
 def _settings_or_skip() -> Settings:
     try:
-        return settings_from_env()
+        return Settings.from_env(require_typesafe_key=False)
     except ValueError as exc:
         pytest.skip(
             f"No live Neo4j configured (missing .env) — skipping Companies KG tests: {exc}"
