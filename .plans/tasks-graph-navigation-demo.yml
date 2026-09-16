@@ -216,7 +216,7 @@ tasks:
       cell). Each run's NavResult is rendered via src/neo4jev/viz.py using .render() (inline
       HTML) so the path vs. neighborhood distinction is visible for each goal mode, with the
       path_intent run showing multiple distinct paths.
-    status: in_progress
+    status: completed
     dependencies:
       - task-005
       - task-006
@@ -228,7 +228,7 @@ tasks:
       - "Each goal mode's result is rendered inline via viz.py with path vs. neighborhood visibly distinguished"
       - "The path_intent run's rendered output shows more than one distinct path when the graph has multiple qualifying paths"
       - "A markdown cell documents the Companies-KG-native pattern used to demonstrate path_intent mode"
-    completed_at: null
+    completed_at: 2026-09-16T01:36:15Z
 
   - id: task-010
     title: 'Build Streamlit app (label picker -> search -> goal mode -> run -> viz)'

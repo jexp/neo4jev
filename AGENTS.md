@@ -27,6 +27,12 @@ TESTING FRAMEWORKS: `pytest` + `pytest-asyncio`
 
 `tests/unit/` mocks both the Neo4j driver and the TypeSafe client — no network or credentials required. `tests/integration/` runs against the live public Companies KG (`neo4j+s://demo.neo4jlabs.com:7687`, db `companies`, creds `companies`/`companies`) and a real TypeSafe call, using the same `.env` (credentials are public/non-secret, so no separate `integration.env`).
 
+## Notebooks
+
+Notebooks under `notebooks/` are executed with their outputs saved — the saved render is the deliverable, not scratch. Executing one needs an ipykernel in the kernel environment; `uv run --with nbclient --with ipykernel --with nbformat` plus a kernelspec whose `argv` points at the running interpreter works, and `JUPYTER_PATH=<dir>` must contain `kernels/<name>/kernel.json` (the entries are Jupyter *data* dirs, so `kernels/` is part of the path).
+
+Careful with output size: `VisualizationGraph.render()` inlines neo4j-viz's ~8 MB JS template into **every** HTML output, so `03_full_traversal.ipynb` (three inline graph renders) is ~25 MB on disk and ~5 MB gzipped in git. Re-executing one of these notebooks rewrites that whole blob, so re-save outputs only when the notebook genuinely changed, and do not strip the renders to save space — an inline rendered graph is an acceptance criterion for `03`.
+
 ## Architecture
 
 ARCHITECTURE PATTERN: Layered library + delivery surfaces (notebooks, Streamlit app) on top.
