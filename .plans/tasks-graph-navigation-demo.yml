@@ -14,7 +14,7 @@ tasks:
       Streamlit app (app/streamlit_app.py). Reference .plans/prd-graph-navigation-demo.md as the
       source of detailed requirements. This is a documentation-only task; no library code exists
       yet, so describe the target layout from the PRD.
-    status: pending
+    status: in_progress
     dependencies: []
     acceptance_criteria:
       - "README.md exists at repo root with non-empty, accurate content"
@@ -34,14 +34,14 @@ tasks:
       db companies, user/pass companies/companies) and a placeholder for TYPESAFE_API_KEY.
       Add a unit test that loading Settings from a temp .env file (or monkeypatched env vars)
       produces the expected values, and that NEO4J_URL and NEO4J_URI are both accepted.
-    status: pending
+    status: completed
     dependencies: []
     acceptance_criteria:
       - "src/neo4jev/config.py exists and exposes a settings-loading function/dataclass"
       - ".env.example exists at repo root with all required variable names documented"
       - "Settings loader accepts either NEO4J_URL or NEO4J_URI"
       - "tests/unit/test_config.py passes with no network access"
-    completed_at: null
+    completed_at: 2026-09-16T00:42:29Z
 
   - id: task-003
     title: 'Add shared types.py contract (NavCandidate, NavStep, NavResult, BeamState, GoalSpec)'
@@ -59,7 +59,7 @@ tasks:
       match whichever style is already used elsewhere in the dependency tree. Add unit tests
       that construct each type and validate basic invariants (e.g. GoalSpec discriminates
       correctly on its mode field).
-    status: pending
+    status: in_progress
     dependencies: []
     acceptance_criteria:
       - "src/neo4jev/types.py defines NavCandidate, NavStep, NavResult, BeamState, GoalSpec"
