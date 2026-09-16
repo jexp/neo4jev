@@ -1,0 +1,283 @@
+feature: graph-navigation-demo
+prd: ./prd-graph-navigation-demo.md
+created_at: 2026-09-16T00:00:00Z
+updated_at: 2026-09-16T00:00:00Z
+
+tasks:
+  - id: task-001
+    title: 'Write README.md mirroring the approved plan/PRD'
+    description: |
+      Write the project README.md: purpose and architecture overview (TypeSafe system_one
+      Choice+Noul beam search over Neo4j, driven schema-agnostically), setup instructions
+      (uv sync, copying .env.example to .env and filling in NEO4J_URL/USERNAME/PASSWORD/DATABASE
+      and TYPESAFE_API_KEY), and usage instructions for both the notebooks (notebooks/) and the
+      Streamlit app (app/streamlit_app.py). Reference .plans/prd-graph-navigation-demo.md as the
+      source of detailed requirements. This is a documentation-only task; no library code exists
+      yet, so describe the target layout from the PRD.
+    status: pending
+    dependencies: []
+    acceptance_criteria:
+      - "README.md exists at repo root with non-empty, accurate content"
+      - "README documents .env setup (all required variables named)"
+      - "README documents how to run notebooks and `streamlit run app/streamlit_app.py`"
+      - "README briefly explains the three goal modes (free text / target node / path intent)"
+    completed_at: null
+
+  - id: task-002
+    title: 'Add config.py (env loading) and .env.example'
+    description: |
+      Create src/neo4jev/config.py with a Settings dataclass (or similar) loaded via
+      python-dotenv, accepting either NEO4J_URL or NEO4J_URI (URI takes precedence if both
+      given, or document the precedence), plus NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE,
+      and TYPESAFE_API_KEY. Create .env.example at repo root documenting all variables with
+      placeholder/public demo values (the Companies KG credentials are public: neo4j+s://demo.neo4jlabs.com:7687,
+      db companies, user/pass companies/companies) and a placeholder for TYPESAFE_API_KEY.
+      Add a unit test that loading Settings from a temp .env file (or monkeypatched env vars)
+      produces the expected values, and that NEO4J_URL and NEO4J_URI are both accepted.
+    status: pending
+    dependencies: []
+    acceptance_criteria:
+      - "src/neo4jev/config.py exists and exposes a settings-loading function/dataclass"
+      - ".env.example exists at repo root with all required variable names documented"
+      - "Settings loader accepts either NEO4J_URL or NEO4J_URI"
+      - "tests/unit/test_config.py passes with no network access"
+    completed_at: null
+
+  - id: task-003
+    title: 'Add shared types.py contract (NavCandidate, NavStep, NavResult, BeamState, GoalSpec)'
+    description: |
+      Create src/neo4jev/types.py defining the shared data contract used by neo4j_access.py,
+      navigator.py, and viz.py: NavCandidate (edge_key, rel_element_id, rel_type, rel_props,
+      target_element_id, target_label, target_props), NavStep (node id, candidates considered,
+      chosen candidate(s), probabilities, log_prob delta), NavResult (one or more NavStep
+      sequences/paths, visited-neighborhood node/rel ids, termination reason(s)), BeamState
+      (frontier of partial paths with cumulative log-prob and a visited-node set per branch),
+      and GoalSpec as a tagged union/discriminated dataclass covering the three goal modes:
+      free_text (goal description string), target_node (element id + label), and path_intent
+      (pattern description string + optional stage list + top_n paths to return). Use plain
+      dataclasses (or pydantic if simpler given neo4j_viz already depends on pydantic) —
+      match whichever style is already used elsewhere in the dependency tree. Add unit tests
+      that construct each type and validate basic invariants (e.g. GoalSpec discriminates
+      correctly on its mode field).
+    status: pending
+    dependencies: []
+    acceptance_criteria:
+      - "src/neo4jev/types.py defines NavCandidate, NavStep, NavResult, BeamState, GoalSpec"
+      - "GoalSpec supports exactly the three modes: free_text, target_node, path_intent"
+      - "tests/unit/test_types.py passes with no network access"
+      - "Types are plain dataclasses/pydantic models with no Neo4j or TypeSafe SDK imports (kept decoupled)"
+    completed_at: null
+
+  - id: task-004
+    title: 'Implement neo4j_access.py (driver, index detection, node lookup, neighborhood fetch)'
+    description: |
+      Create src/neo4jev/neo4j_access.py using the neo4j driver (installed via neo4j-rust-ext,
+      same `import neo4j` namespace) and src/neo4jev/config.py for connection settings. Implement:
+      a driver context manager; list_labels(); detect_indexes(label) that queries `SHOW INDEXES`
+      to determine which of exact (always available)/fulltext/vector lookup modes apply to a
+      given label; search_start_nodes(label, query, mode) implementing exact substring/equality
+      match, a fulltext CALL db.index.fulltext.queryNodes query, and a vector
+      CALL db.index.vector.queryNodes query (embed the query text — inspect what embedding
+      dimension/model the target index expects, e.g. via index metadata, and document the
+      embedding approach used); get_outgoing_relationships(node_id, rel_type_cap=10, total_cap=60)
+      returning a capped list of NavCandidate (from types.py) plus truncation metadata
+      ("N of M edges considered") when capped; get_node_neighborhood(node_ids) for
+      visualization context. All label/relationship-type/property names must be discovered
+      live, never hardcoded. Write unit tests with a mocked/fake driver covering the capping
+      and truncation-reporting logic and the edge_key generation/mapping. Write integration
+      tests (tests/integration/test_neo4j_companies_kg.py) against the live Companies KG
+      (neo4j+s://demo.neo4jlabs.com:7687, db companies) verifying: list_labels() returns
+      expected labels, detect_indexes("Organization") finds the `entity` fulltext index,
+      a fulltext search for a well-known company name returns results, and
+      get_outgoing_relationships on a real node returns a non-empty capped candidate list.
+    status: pending
+    dependencies:
+      - task-002
+      - task-003
+    acceptance_criteria:
+      - "src/neo4jev/neo4j_access.py implements list_labels, detect_indexes, search_start_nodes (exact/fulltext/vector), get_outgoing_relationships, get_node_neighborhood"
+      - "Relationship candidates are capped per-type and in total, with truncation surfaced in the return value"
+      - "tests/unit/test_neo4j_access_mapping.py passes with a mocked driver, no network access"
+      - "tests/integration/test_neo4j_companies_kg.py passes against the live demo.neo4jlabs.com companies KG"
+      - "No label, relationship type, or property name is hardcoded outside of test fixtures/docs"
+    completed_at: null
+
+  - id: task-005
+    title: 'Implement navigator.py (TypeSafe Choice+Noul beam search, all 3 goal modes)'
+    description: |
+      Create src/neo4jev/navigator.py wrapping typesafe_sdk.TypeSafeClient (or
+      AsyncTypeSafeClient) to run beam-search graph navigation. Per hop: build one Choice
+      question (options keyed by synthetic ids e0,e1,... mapped back to NavCandidate via a
+      side table — never key by relationship type) with criteria/instructions describing each
+      candidate edge+target, plus one Noul question ("has the goal been reached?"), both in a
+      single system_one call, using a `state` built from the current node's data and the
+      GoalSpec (from types.py). Implement all three goal modes per the PRD: free_text (Noul
+      criteria = the free-text description), target_node (terminate when the exact target
+      element id is reached, independent of Noul), and path_intent (decompose the pattern
+      description into ordered stage-guidance strings, bias Choice.instructions per hop toward
+      the current stage's semantics, test Noul against the final stage's class description,
+      run multiple beam branches concurrently, return the configurable top-N distinct
+      best-scoring paths rather than one). Implement: visited-node cycle guard, max depth,
+      max API-call budget, and path scoring by sum of log-probabilities. Return a NavResult
+      (types.py). Write unit tests with a mocked TypeSafe client asserting: correct edge_key
+      to NavCandidate mapping, correct top-k/cutoff filtering of probabilities, correct
+      cumulative log-probability scoring, cycle/depth/budget guards trigger correctly, and
+      path_intent mode returns multiple distinct paths when multiple branches score well.
+      Write one integration test making a single real TypeSafe system_one call combined with
+      one real Neo4j hop (gated on required env vars being present).
+    status: pending
+    dependencies:
+      - task-002
+      - task-003
+    acceptance_criteria:
+      - "src/neo4jev/navigator.py implements a single-hop function issuing exactly one system_one call per hop with both a Choice and a Noul question"
+      - "Choice options are keyed by synthetic opaque ids with a side mapping table back to NavCandidate"
+      - "Beam search enforces a visited-node cycle guard, max depth, and max API-call budget"
+      - "Path scoring uses sum of log-probabilities"
+      - "All three GoalSpec modes (free_text, target_node, path_intent) are implemented, with path_intent returning top-N distinct paths"
+      - "tests/unit/test_navigator_scoring.py passes with a mocked TypeSafe client, no network access"
+      - "tests/integration/test_navigator_live.py passes (or is properly skipped when credentials are absent) against real TypeSafe + Neo4j"
+    completed_at: null
+
+  - id: task-006
+    title: 'Implement viz.py (NavResult -> styled neo4j-viz VisualizationGraph)'
+    description: |
+      Create src/neo4jev/viz.py that builds a neo4j_viz.VisualizationGraph from a NavResult
+      (types.py): path nodes/relationships are styled (color/caption) distinctly from
+      neighborhood-only nodes/relationships, using VisualizationGraph.color_nodes /
+      color_relationships / set_legend as appropriate. When NavResult contains multiple
+      paths (path_intent mode), each distinct path must be visually distinguishable (e.g. a
+      distinct color per path index) while still sharing one legend/graph. Expose a
+      render-for-notebook helper (returning the .render() HTML object) and a
+      render-for-streamlit helper (returning the .render_widget() GraphWidget, ready to pass
+      to neo4j_viz.streamlit.display_widget()). Write unit tests constructing a small
+      synthetic NavResult (no real Neo4j/TypeSafe calls) and asserting the resulting
+      VisualizationGraph has the expected node/relationship counts and that path vs.
+      neighborhood entities receive different styling.
+    status: pending
+    dependencies:
+      - task-003
+    acceptance_criteria:
+      - "src/neo4jev/viz.py builds a VisualizationGraph from a NavResult"
+      - "Path nodes/relationships are visually distinct from neighborhood-only ones"
+      - "Multiple paths in one NavResult are individually distinguishable"
+      - "Both a static-render helper and a render_widget-ready helper are exposed"
+      - "A unit test covering styling logic passes with no network access"
+    completed_at: null
+
+  - id: task-007
+    title: 'Notebook 01: explore graph (labels, indexes) against Companies KG'
+    description: |
+      Create notebooks/01_explore_graph.ipynb using src/neo4jev/neo4j_access.py against the
+      live Companies KG: connect using config.py settings, list labels, and for a few
+      interesting labels (e.g. Organization, Article, Chunk) show which lookup modes
+      (exact/fulltext/vector) detect_indexes() reports as available, with a sample
+      search_start_nodes() call for each detected mode. The notebook must run top-to-bottom
+      without error and print/display real results from the live graph.
+    status: pending
+    dependencies:
+      - task-004
+    acceptance_criteria:
+      - "notebooks/01_explore_graph.ipynb exists and executes top-to-bottom with no errors against the live Companies KG"
+      - "Notebook lists real labels from the graph"
+      - "Notebook demonstrates detect_indexes() finding at least the entity fulltext index and the news vector index"
+      - "Notebook demonstrates at least one successful search_start_nodes() call per detected mode"
+    completed_at: null
+
+  - id: task-008
+    title: 'Notebook 02: single-hop navigator dry run'
+    description: |
+      Create notebooks/02_navigator_dry_run.ipynb using src/neo4jev/navigator.py and
+      neo4j_access.py against the live Companies KG: pick a real start node (via
+      search_start_nodes), fetch its outgoing relationships, run one hop of the TypeSafe
+      Choice+Noul call, and print/display the returned probabilities, confidence, and Noul
+      value so top-k/cutoff behavior can be sanity-checked visually. The notebook must run
+      top-to-bottom without error and show real TypeSafe API output.
+    status: pending
+    dependencies:
+      - task-005
+    acceptance_criteria:
+      - "notebooks/02_navigator_dry_run.ipynb exists and executes top-to-bottom with no errors"
+      - "Notebook performs exactly one real system_one call and displays its full probabilities dict"
+      - "Notebook demonstrates applying a top-k and/or cutoff selection over the returned probabilities"
+    completed_at: null
+
+  - id: task-009
+    title: 'Notebook 03: full traversal across all three goal modes + visualization'
+    description: |
+      Create notebooks/03_full_traversal.ipynb exercising the full beam search
+      (src/neo4jev/navigator.py) end-to-end against the live Companies KG for all three
+      goal modes: free_text (e.g. a natural-language goal about competitor companies),
+      target_node (navigate to a specific looked-up node), and path_intent (a multi-hop
+      pattern description native to the Companies KG's own schema, e.g. following
+      organization/article/mentions relationships toward a class of target — since the
+      Companies KG has no patient/gene/disease schema, use a structurally analogous
+      multi-stage pattern that exists in this graph, and note this adaptation in a markdown
+      cell). Each run's NavResult is rendered via src/neo4jev/viz.py using .render() (inline
+      HTML) so the path vs. neighborhood distinction is visible for each goal mode, with the
+      path_intent run showing multiple distinct paths.
+    status: pending
+    dependencies:
+      - task-005
+      - task-006
+      - task-007
+      - task-008
+    acceptance_criteria:
+      - "notebooks/03_full_traversal.ipynb exists and executes top-to-bottom with no errors against the live Companies KG"
+      - "All three goal modes are demonstrated in separate cells/sections with real results"
+      - "Each goal mode's result is rendered inline via viz.py with path vs. neighborhood visibly distinguished"
+      - "The path_intent run's rendered output shows more than one distinct path when the graph has multiple qualifying paths"
+      - "A markdown cell documents the Companies-KG-native pattern used to demonstrate path_intent mode"
+    completed_at: null
+
+  - id: task-010
+    title: 'Build Streamlit app (label picker -> search -> goal mode -> run -> viz)'
+    description: |
+      Create app/streamlit_app.py using src/neo4jev/{config,types,neo4j_access,navigator,viz}.py:
+      a label picker (from list_labels()); a start-node search box whose available modes
+      (exact/fulltext/vector) are auto-detected per selected label via detect_indexes(); a
+      goal-mode picker (free text / target node / path intent) rendering the appropriate
+      input widget for each (free-text box; a second lookup search box for target node;
+      a pattern-description text area plus a top-N number input for path intent); run
+      controls for top-k, probability cutoff, max depth, and max API-call budget; a Run
+      button that executes the beam search and renders the resulting NavResult via
+      neo4j_viz.streamlit.display_widget(), plus a simple per-hop probability/trace table
+      or expander below the graph. Manually run `streamlit run app/streamlit_app.py` and
+      verify each control path works against the live Companies KG (screenshot or terminal
+      log noting no exceptions is sufficient verification within this task; a UI automation
+      test is out of scope).
+    status: pending
+    dependencies:
+      - task-004
+      - task-005
+      - task-006
+    acceptance_criteria:
+      - "app/streamlit_app.py implements label picker, auto-detected start-node search, goal-mode picker with mode-specific inputs, run controls, and result visualization"
+      - "The interactive neo4j-viz widget (render_widget/display_widget) is used, not a static iframe"
+      - "A per-hop probability/trace view is shown alongside the graph"
+      - "Manual run against the live Companies KG completes each of the three goal modes without unhandled exceptions"
+    completed_at: null
+
+  - id: task-011
+    title: 'Full test pass, README/AGENTS.md polish, PRD acceptance criteria verification'
+    description: |
+      Run the full unit and integration test suites (uv run pytest tests/unit and
+      uv run pytest tests/integration) and fix any failures. Re-read
+      .plans/prd-graph-navigation-demo.md and verify each Acceptance Criteria item is
+      actually satisfied by the current state of the repo, fixing any gaps found (e.g.
+      missing README sections, hardcoded schema names). Update README.md if anything about
+      setup/usage has drifted from what was actually built. Do not expand scope beyond
+      closing PRD gaps found during this verification pass.
+    status: pending
+    dependencies:
+      - task-001
+      - task-007
+      - task-008
+      - task-009
+      - task-010
+    acceptance_criteria:
+      - "uv run pytest tests/unit passes with zero network access"
+      - "uv run pytest tests/integration passes against the live Companies KG"
+      - "Every checkbox in the PRD's Acceptance Criteria section is verifiably true of the current repo state"
+      - "README.md accurately reflects the final setup/usage instructions"
+    completed_at: null
