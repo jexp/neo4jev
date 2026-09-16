@@ -224,7 +224,7 @@ def build_visualization(result: NavResult) -> VisualizationGraph:
     from nodes the traversal actually reached are rendered.
     """
     builder = _GraphBuilder()
-    builder.add_node(result.start_element_id, role=START_ROLE)
+    builder.add_node(result.start_element_id, result.start_label, result.start_props, role=START_ROLE)
     for index, path in enumerate(result.paths):
         builder.add_path(path, index)
     path_node_ids = {result.start_element_id}

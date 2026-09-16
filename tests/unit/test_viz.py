@@ -169,6 +169,24 @@ def test_start_node_falls_back_to_its_element_id_as_caption():
     assert _node(graph, "n0").caption == "n0"
 
 
+def test_start_node_uses_its_label_and_props_when_the_result_carries_them():
+    result = NavResult(
+        start_element_id="n0",
+        start_label="Organization",
+        start_props={"id": "4:…:1742", "name": "Apple", "description": "American multinational technology company"},
+        paths=[],
+        neighborhood=[],
+    )
+
+    graph = build_visualization(result)
+
+    start = _node(graph, "n0")
+    assert start.caption == "American multinational technology company"
+    assert start.properties["label"] == "Organization"
+    assert start.properties["name"] == "Apple"
+    assert start.color is not None
+
+
 def test_node_seen_first_as_a_source_still_picks_up_properties_seen_later():
     # n1 is a path node (source of a chosen edge) so its neighborhood edges render.
     path = NavPath(

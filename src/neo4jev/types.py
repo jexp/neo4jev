@@ -47,6 +47,8 @@ class NavResult:
     start_element_id: str
     paths: list[NavPath]
     neighborhood: list[NavCandidate] = field(default_factory=list)
+    start_label: str = ""
+    start_props: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -479,6 +479,8 @@ async def navigate(
                     terminated_reason=TerminationReason.GOAL_REACHED,
                 )
             ],
+            start_label=start_node.label,
+            start_props=dict(start_node.properties),
         )
 
     nodes: dict[str, NodeContext] = {start_node.element_id: start_node}
@@ -534,6 +536,8 @@ async def navigate(
         start_element_id=start_node.element_id,
         paths=_select_result_paths(goal, terminated, leftover),
         neighborhood=_neighborhood(considered),
+        start_label=start_node.label,
+        start_props=dict(start_node.properties),
     )
 
 
