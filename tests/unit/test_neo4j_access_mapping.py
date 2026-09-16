@@ -135,17 +135,47 @@ def test_cap_applies_total_cap_across_types():
     assert len(result.candidates) == 25
     assert result.total_edges == 25 + 2558 + 159
     assert result.truncated is True
-    # Types visited in name order: COMPETITOR(10) + SUBSIDIARY(10) + SUPPLIER(5)
+    # Round-robin across types in name order: 25 slots across 3 types of 10 = 9/8/8,
+    # the first type alphabetically taking the extra slot.
     assert result.by_type_considered == {
-        "HAS_COMPETITOR": 10,
-        "HAS_SUBSIDIARY": 10,
-        "HAS_SUPPLIER": 5,
+        "HAS_COMPETITOR": 9,
+        "HAS_SUBSIDIARY": 8,
+        "HAS_SUPPLIER": 8,
     }
     assert {c.rel_type for c in result.candidates} == {
         "HAS_COMPETITOR",
         "HAS_SUBSIDIARY",
         "HAS_SUPPLIER",
     }
+
+
+def test_total_cap_round_robin_prevents_name_order_starvation():
+    # The old name-order trim let an early-alphabet type consume the whole budget
+    # (Apple's HAS_COMPETITOR reported "0 of 26"). Round-robin keeps every type in play.
+    per_type = {
+        "APPLIED_FOR": (200, [_candidate("APPLIED_FOR", i) for i in range(200)]),
+        "HAS_CATEGORY": (300, [_candidate("HAS_CATEGORY", i) for i in range(300)]),
+        "HAS_COMPETITOR": (26, [_candidate("HAS_COMPETITOR", i) for i in range(26)]),
+        "HAS_SUPPLIER": (828, [_candidate("HAS_SUPPLIER", i) for i in range(828)]),
+    }
+
+    result = cap_outgoing_edges(per_type, rel_type_cap=10, total_cap=60)
+
+    assert len(result.candidates) == 40
+    assert result.by_type_considered["HAS_COMPETITOR"] == 10
+    assert result.note.startswith("40 of ")
+
+
+def test_total_cap_respects_per_type_cap_first():
+    per_type = {
+        "HAS_A": (50, [_candidate("HAS_A", i) for i in range(50)]),
+        "HAS_B": (50, [_candidate("HAS_B", i) for i in range(50)]),
+    }
+
+    result = cap_outgoing_edges(per_type, rel_type_cap=2, total_cap=10)
+
+    assert len(result.candidates) == 4
+    assert result.by_type_considered == {"HAS_A": 2, "HAS_B": 2}
 
 
 def test_cap_note_reports_n_of_m_edges_considered():
@@ -179,12 +209,12 @@ def test_cap_is_deterministic_and_assigns_sequential_edge_keys():
     first = cap_outgoing_edges(per_type, rel_type_cap=10, total_cap=60)
     second = cap_outgoing_edges(per_type, rel_type_cap=10, total_cap=60)
 
-    assert [c.rel_type for c in first.candidates] == ["HAS_A", "HAS_A", "HAS_B", "HAS_B"]
+    assert [c.rel_type for c in first.candidates] == ["HAS_A", "HAS_B", "HAS_A", "HAS_B"]
     assert [c.edge_key for c in first.candidates] == ["e0", "e1", "e2", "e3"]
     assert [c.target_element_id for c in first.candidates] == [
         c.target_element_id for c in second.candidates
     ]
-    assert first.mapping["e2"].rel_type == "HAS_B"
+    assert first.mapping["e1"].rel_type == "HAS_B"
     assert first.source_element_id == second.source_element_id
 
 

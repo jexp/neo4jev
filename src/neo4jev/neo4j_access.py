@@ -164,16 +164,25 @@ def cap_outgoing_edges(
     """Apply the per-type and total caps and report the truncation.
 
     ``per_type_edges`` maps relationship type -> (true edge count, candidates).
-    Relationship types are visited in name order so the result is deterministic;
-    the total cap then trims from that ordered list.
+    The per-type cap bounds each bucket first; the total cap then fills the budget by
+    round-robin across types in name order, so a name-order-early type on a supernode
+    cannot starve later types out of the result entirely.
     """
-    selected: list[NavCandidate] = []
+    capped: dict[str, list[NavCandidate]] = {}
     by_type_totals: dict[str, int] = {}
     for rel_type, (total, candidates) in sorted(per_type_edges.items()):
         by_type_totals[rel_type] = total
-        selected.extend(list(candidates)[:rel_type_cap])
+        capped[rel_type] = list(candidates)[:rel_type_cap]
 
-    selected = selected[:total_cap]
+    queues = {rel_type: list(candidates) for rel_type, candidates in capped.items()}
+    selected: list[NavCandidate] = []
+    while len(selected) < total_cap and any(queues.values()):
+        for rel_type in sorted(queues):
+            if len(selected) >= total_cap:
+                break
+            if queues[rel_type]:
+                selected.append(queues[rel_type].pop(0))
+
     by_type_considered = {rel_type: 0 for rel_type in by_type_totals}
     for candidate in selected:
         by_type_considered[candidate.rel_type] = (
