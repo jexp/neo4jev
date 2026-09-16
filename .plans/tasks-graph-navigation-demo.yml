@@ -268,7 +268,7 @@ tasks:
       missing README sections, hardcoded schema names). Update README.md if anything about
       setup/usage has drifted from what was actually built. Do not expand scope beyond
       closing PRD gaps found during this verification pass.
-    status: pending
+    status: completed
     dependencies:
       - task-001
       - task-007
@@ -280,4 +280,4 @@ tasks:
       - "uv run pytest tests/integration passes against the live Companies KG"
       - "Every checkbox in the PRD's Acceptance Criteria section is verifiably true of the current repo state"
       - "README.md accurately reflects the final setup/usage instructions"
-    completed_at: null
+    completed_at: 2026-09-16T01:55:53Z

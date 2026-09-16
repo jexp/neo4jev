@@ -4,7 +4,9 @@
 
 A demo application that navigates a Neo4j graph one hop at a time using TypeSafe's `system_one` structured-decision API instead of free-text LLM generation. At each visited node, outgoing relationships are presented to the API as `Choice` options (each carrying relationship type, relationship properties, and target node label/properties), and the API returns a full probability distribution over which relationship(s) to follow next. A `Noul` ("has the goal been reached?") question rides in the same `system_one` call as the `Choice`, so each hop costs exactly one round-trip regardless of how many questions are asked. Top-k/cutoff selection over the returned `probabilities` implements a beam search: at each step the search may branch into several candidate next-hops; the best-scoring chain(s) (ranked by sum of log-probabilities, to avoid float underflow and length bias) become "the path(s) taken", rendered in an interactive `neo4j-viz` graph alongside the surrounding neighborhood.
 
-The demo targets the public Neo4j Companies KG (`neo4j+s://demo.neo4jlabs.com:7687`, db `companies`) but the application itself is schema-agnostic: labels, relationship types, and property names are discovered live via introspection, never hardcoded, so it can point at any other Neo4j instance via `.env`.
+The demo targets the public Neo4j Companies KG (`neo4j+s://demo.neo4jlabs.com:7687`) but the application itself is schema-agnostic: labels, relationship types, and property names are discovered live via introspection, never hardcoded, so it can point at any other Neo4j instance via `.env`.
+
+> **Mid-build change (see `.plans/progress-graph-navigation-demo.txt`)**: the target database was switched from `companies` to `companies2` (same server; username/password/database all `companies2`). The two databases have different index layouts, so `.env`, `.env.example`, the integration tests and the notebooks now reference `companies2`'s indexes (`organization_fullName`, `person_name`, `news_openai_small`). The requirements below are unaffected — they are deliberately schema-agnostic — but any literal `companies` index name read from the original text no longer applies.
 
 Delivery is in two layers: first a set of Jupyter notebooks that prove out the approach end-to-end against the real graph, then a Streamlit app that wraps the same library code in an interactive UI (start-node search, goal specification, run, visualize).
 
@@ -63,13 +65,19 @@ Delivery is in two layers: first a set of Jupyter notebooks that prove out the a
 
 ## Acceptance Criteria
 
-- [ ] `README.md` exists and accurately documents setup and usage for both notebooks and the Streamlit app.
-- [ ] `uv sync && pytest tests/unit` passes with zero network access.
-- [ ] `pytest tests/integration` passes against the live Companies KG using `.env`.
-- [ ] All three notebooks execute top-to-bottom without error against the live Companies KG, and `03_full_traversal.ipynb` visibly demonstrates all three goal modes with rendered graphs.
+- [x] `README.md` exists and accurately documents setup and usage for both notebooks and the Streamlit app.
+- [x] `uv sync && pytest tests/unit` passes with zero network access.
+- [x] `pytest tests/integration` passes against the live Companies KG using `.env`.
+- [x] All three notebooks execute top-to-bottom without error against the live Companies KG, and `03_full_traversal.ipynb` visibly demonstrates all three goal modes with rendered graphs.
 - [ ] `streamlit run app/streamlit_app.py` allows: picking a label, searching for a start node via each detected lookup mode, selecting each of the three goal modes with mode-appropriate inputs, running a traversal, and seeing an interactive graph with the path(s) visually distinct from neighborhood context.
 - [ ] Path-intent mode, given a multi-hop natural-language pattern description, returns more than one distinct path when multiple qualifying paths exist in the graph.
-- [ ] No relationship type, label, or property name is hardcoded in `src/neo4jev/` application logic (aside from illustrative examples in docs/comments).
+- [x] No relationship type, label, or property name is hardcoded in `src/neo4jev/` application logic (aside from illustrative examples in docs/comments).
+
+> **Verification status (task-011, 2026-09-16 — full record in `.plans/progress-graph-navigation-demo.txt`).**
+> Items 1-4 and 7 verified directly: 106 unit tests pass with no network (`uv run pytest tests/unit`), 9 integration tests pass against the live database (the one live-TypeSafe test skips by contract while `TYPESAFE_API_KEY` is empty), all three notebooks execute with zero error outputs and `03` carries three inline graph renders, and a grep of `src/neo4jev/` finds no hardcoded schema name.
+> Items 5 and 6 are **deliberately left unticked**: their remaining clause is a *live* `system_one` traversal, and `TYPESAFE_API_KEY` is empty in this environment.
+> For 5, everything except "running a traversal" was exercised (HTTP 200, and an `AppTest` run confirming the 15-label picker and per-label auto-detected lookup modes — `Organization` exact+fulltext, `Chunk` exact+vector, `Article` exact — with no exceptions); the app gates the run with a banner instead of raising.
+> For 6, the executed notebook does return three distinct paths, but driven by the explicitly labelled stand-in client rather than the model. No TypeSafe output was fabricated to tick either box.
 
 ## Out of Scope
 
