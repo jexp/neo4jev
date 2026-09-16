@@ -23,9 +23,11 @@ START_ROLE = "start"
 NEIGHBORHOOD_ROLE = "neighborhood"
 PATH_ROLE_PREFIX = "path_"
 
-# Slots from neo4j-viz's own NEO4J_COLORS_DISCRETE palette (not a public export).
-PATH_COLORS = ("#F79767", "#C990C0", "#56C7E4", "#8DCC93", "#DA7294", "#4D8DDA")
-START_COLOR = "#FFC354"
+# Deliberately NOT from neo4j-viz's NEO4J_COLORS_DISCRETE palette: the base layer colors
+# nodes by label using that palette, so path colors must be disjoint from it to keep path
+# entities distinguishable from same-labeled neighbors.
+PATH_COLORS = ("#1E88E5", "#D81B60", "#43A047", "#8E24AA", "#F4511E", "#00ACC1")
+START_COLOR = "#212121"
 NEIGHBORHOOD_COLOR = "#D8C7AE"
 
 START_NODE_SIZE = 32.0
