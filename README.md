@@ -16,21 +16,26 @@ and length bias — become "the path(s) taken". Results are rendered in an inter
 [`neo4j-viz`](https://pypi.org/project/neo4j-viz/) graph alongside the surrounding
 neighborhood.
 
-> **Status**: this repository is being built out from an approved PRD/task plan.
-> The layout below (`src/neo4jev/`, `notebooks/`, `app/streamlit_app.py`) describes
-> the *target* structure; most of these files do not exist yet. See
-> [`.plans/prd-graph-navigation-demo.md`](.plans/prd-graph-navigation-demo.md) for
-> the full, authoritative requirements and design rationale, and
-> [`.plans/tasks-graph-navigation-demo.yml`](.plans/tasks-graph-navigation-demo.yml)
-> for the current build status of each piece.
+> **Status**: the library, the three notebooks and the Streamlit app are built and run
+> against the live `companies2` graph. The notebooks and the app execute end to end; the
+> TypeSafe `system_one` calls inside them need `TYPESAFE_API_KEY` in `.env` — without it
+> each call is attempted, its failure is displayed verbatim, and the surrounding pipeline
+> is exercised on explicitly labelled stand-in answers. Nothing is ever presented as
+> TypeSafe output that did not come from TypeSafe. See
+> [`.plans/prd-graph-navigation-demo.md`](.plans/prd-graph-navigation-demo.md) for the
+> authoritative requirements and design rationale, and
+> [`.plans/tasks-graph-navigation-demo.yml`](.plans/tasks-graph-navigation-demo.yml) for
+> the build status of each piece.
 
 ## Architecture overview
 
 The demo targets the public Neo4j "Companies KG" instance
-(`neo4j+s://demo.neo4jlabs.com:7687`, database `companies`) by default, but the
+(`neo4j+s://demo.neo4jlabs.com:7687`, database `companies2`) by default, but the
 application itself is **schema-agnostic**: labels, relationship types, and property
 names are discovered live via introspection and are never hardcoded, so it can be
-pointed at any other Neo4j instance via `.env`.
+pointed at any other Neo4j instance via `.env`. The `companies2` database is the target
+here; the older `companies` database on the same server has a different index layout (see
+[`AGENTS.md`](AGENTS.md)).
 
 Delivery is in two layers built on a single shared library:
 
@@ -42,7 +47,7 @@ Delivery is in two layers built on a single shared library:
 - **`app/streamlit_app.py`** — a Streamlit UI wrapping the same library code
   (start-node search, goal specification, run controls, interactive visualization).
 
-Planned modules under `src/neo4jev/`:
+Modules under `src/neo4jev/`:
 
 | Module | Responsibility |
 | --- | --- |
@@ -90,15 +95,36 @@ Requires Python >=3.12 and [`uv`](https://docs.astral.sh/uv/).
 
    | Variable | Description |
    | --- | --- |
-   | `NEO4J_URL` (or `NEO4J_URI`) | Bolt connection URI, e.g. `neo4j+s://demo.neo4jlabs.com:7687` for the public Companies KG. If both `NEO4J_URI` and `NEO4J_URL` are set, `NEO4J_URI` takes precedence (subject to change while `config.py` is still being built out — see the task file). |
-   | `NEO4J_USERNAME` | Database username (`companies` for the public demo instance). |
-   | `NEO4J_PASSWORD` | Database password (`companies` for the public demo instance). |
-   | `NEO4J_DATABASE` | Database name (`companies` for the public demo instance). |
-   | `TYPESAFE_API_KEY` | API key for the TypeSafe `system_one` structured-decision API. |
+   | `NEO4J_URL` (or `NEO4J_URI`) | Bolt connection URI, e.g. `neo4j+s://demo.neo4jlabs.com:7687` for the public Companies KG. If both `NEO4J_URI` and `NEO4J_URL` are set, `NEO4J_URI` takes precedence. |
+   | `NEO4J_USERNAME` | Database username (`companies2` for the public demo instance). |
+   | `NEO4J_PASSWORD` | Database password (`companies2` for the public demo instance). |
+   | `NEO4J_DATABASE` | Database name (`companies2` for the public demo instance). |
+   | `TYPESAFE_API_KEY` | API key for the TypeSafe `system_one` structured-decision API. Required for the navigator: without it a run is attempted, fails with the API's own error, and the notebooks and app fall back to explicitly labelled stand-in answers rather than fabricating model output. |
 
    The public Companies KG credentials above are not secret and are used directly
    by the integration tests — no separate `integration.env` is needed for this
    project.
+
+### What the demo graph offers
+
+Everything schema-shaped is read from the live database, so these are facts about the
+default target (`companies2`), not assumptions in the code — `notebooks/01_explore_graph.ipynb`
+prints them for whatever instance you point at:
+
+| | |
+| --- | --- |
+| Labels | 15 labels: `Organization`, `Person`, `Article`, `Chunk`, `Patent`, `SECFiling`, `City`, `Country`, `Region`, `IndustryCategory`, `Technology`, `Investment`, `NAICSCode`, `IPCClass`, `CPCClass` |
+| Fulltext indexes | `organization_fullName` (on `Organization.fullName`), `person_name` (on `Person.name`) |
+| Vector indexes | `news_openai_small` (on `Chunk.embedding_3_small`, 1536 dims, cosine) |
+| Embeddings | the server's `genai` plugin is unconfigured and no provider key is supplied, so `neo4j_access.default_embedder` is a deterministic hash-seeded placeholder — vector search is dimensionally real but not semantically meaningful. Pass a real `embedder` to `open_access()` to change that. |
+
+**One more property worth knowing before reading a traversal:** each hop is capped at ≤10
+relationships per type and ≤60 in total (REQ-NF-005), and relationship types are visited in
+*name* order, so the total cap fills alphabetically. On a supernode such as Apple Inc. (1354
+outgoing edges) the 60-edge budget is spent on patent and classification edges before the
+alphabet reaches `HAS_COMPETITOR`, `HAS_SUPPLIER` or `USES_TECHNOLOGY` — those contribute
+nothing at all to that hop. Pick a start node whose capped neighbourhood can express the
+goal, or raise `total_cap` (it is a parameter, not a constant).
 
 ## Usage
 
@@ -119,11 +145,19 @@ live Companies KG:
   detects available indexes (fulltext/vector) per label, and demonstrates
   start-node search.
 - `02_navigator_dry_run.ipynb` — runs a single navigator hop against a real node,
-  inspecting the returned `Choice` probabilities, confidence, and `Noul` value
-  before running a full beam search.
+  inspecting the returned `Choice` probabilities, confidence, and `Noul` value,
+  and the top-k/cutoff selection applied to them. (The full beam search is
+  notebook 03.)
 - `03_full_traversal.ipynb` — runs the full beam search end-to-end for all three
   goal modes (free text, target node, path intent) and renders each `NavResult`
   via `viz.py`.
+
+`02` and `03` issue real `system_one` calls, so they need `TYPESAFE_API_KEY`. Without it they
+still run top-to-bottom: each call is attempted, the API's error is shown verbatim, and the
+surrounding pipeline is exercised on explicitly labelled stand-in answers (never presented as
+TypeSafe output). As a consequence, nothing in those two notebooks terminates on
+`goal_reached` until a key is present, and `target_node` mode cannot be demonstrated by a
+stand-in at all — both limitations are stated in the notebooks themselves.
 
 ### Streamlit app
 

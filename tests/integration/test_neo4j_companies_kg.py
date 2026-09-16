@@ -14,10 +14,19 @@ from neo4jev.neo4j_access import Neo4jAccess, open_access, settings_from_env
 
 # The Companies KG's own labels/types — used here as expectations, never as
 # application logic.
+#
+# These are the `companies2` database's indexes: it has no `entity` fulltext index and no
+# `news` vector index (the `companies` database does). Live check of `SHOW INDEXES`:
+#
+#   organization_fullName  FULLTEXT  Organization.fullName
+#   person_name            FULLTEXT  Person.name
+#   news_openai_small      VECTOR    Chunk.embedding_3_small  (1536 dims, COSINE)
 EXPECTED_LABEL = "Organization"
-EXPECTED_FULLTEXT_INDEX = "entity"
+EXPECTED_FULLTEXT_INDEX = "organization_fullName"
+EXPECTED_FULLTEXT_PROPERTY = "fullName"
 EXPECTED_VECTOR_LABEL = "Chunk"
-EXPECTED_VECTOR_INDEX = "news"
+EXPECTED_VECTOR_INDEX = "news_openai_small"
+EXPECTED_VECTOR_DIMENSIONS = 1536
 WELL_KNOWN_COMPANY = "Apple"
 
 
@@ -59,26 +68,28 @@ def test_list_labels_returns_expected_labels(access):
         assert expected in labels
 
 
-def test_detect_indexes_finds_entity_fulltext_index_for_organization(access):
+def test_detect_indexes_finds_organization_fulltext_index_for_organization(access):
     indexes = access.detect_indexes(EXPECTED_LABEL)
 
     assert indexes.supports("exact")
     assert indexes.supports("fulltext")
     assert EXPECTED_FULLTEXT_INDEX in [ref.name for ref in indexes.fulltext]
-    entity = next(ref for ref in indexes.fulltext if ref.name == EXPECTED_FULLTEXT_INDEX)
-    assert entity.kind == "FULLTEXT"
-    assert "name" in entity.properties
+    fulltext = next(
+        ref for ref in indexes.fulltext if ref.name == EXPECTED_FULLTEXT_INDEX
+    )
+    assert fulltext.kind == "FULLTEXT"
+    assert EXPECTED_FULLTEXT_PROPERTY in fulltext.properties
 
 
-def test_detect_indexes_finds_news_vector_index_for_chunk(access):
+def test_detect_indexes_finds_news_openai_small_vector_index_for_chunk(access):
     indexes = access.detect_indexes(EXPECTED_VECTOR_LABEL)
 
     assert indexes.supports("vector")
-    news = next(
-        ref for ref in indexes.vector if ref.name == EXPECTED_VECTOR_INDEX
-    )
-    assert news.dimensions and news.dimensions > 0
-    assert news.properties
+    assert EXPECTED_VECTOR_INDEX in [ref.name for ref in indexes.vector]
+    vector = next(ref for ref in indexes.vector if ref.name == EXPECTED_VECTOR_INDEX)
+    assert vector.kind == "VECTOR"
+    assert vector.dimensions == EXPECTED_VECTOR_DIMENSIONS
+    assert vector.properties
 
 
 def test_fulltext_search_returns_real_organization(access):

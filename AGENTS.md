@@ -25,7 +25,23 @@ Dependencies: `neo4j-rust-ext`, `neo4j-viz[neo4j,streamlit]`, `typesafe-sdk`, `p
 
 TESTING FRAMEWORKS: `pytest` + `pytest-asyncio`
 
-`tests/unit/` mocks both the Neo4j driver and the TypeSafe client — no network or credentials required. `tests/integration/` runs against the live public Companies KG (`neo4j+s://demo.neo4jlabs.com:7687`, db `companies`, creds `companies`/`companies`) and a real TypeSafe call, using the same `.env` (credentials are public/non-secret, so no separate `integration.env`).
+`tests/unit/` mocks both the Neo4j driver and the TypeSafe client — no network or credentials required. `tests/integration/` runs against the live public Companies KG (`neo4j+s://demo.neo4jlabs.com:7687`, db `companies2`, creds `companies2`/`companies2`) and a real TypeSafe call, using the same `.env` (credentials are public/non-secret, so no separate `integration.env`). The live TypeSafe test skips cleanly while `TYPESAFE_API_KEY` is empty; the Neo4j tests run regardless.
+
+## Target Dataset (`companies2`)
+
+The default target is the public Companies KG, **database `companies2`** (creds `companies2`/`companies2`, read-only). Live `SHOW INDEXES`:
+
+| Index | Type | Covers |
+| --- | --- | --- |
+| `organization_fullName` | FULLTEXT | `Organization.fullName` |
+| `person_name` | FULLTEXT | `Person.name` |
+| `news_openai_small` | VECTOR | `Chunk.embedding_3_small` (1536 dims, cosine) |
+
+15 labels. `Article` has **no** fulltext or vector index, so only `exact` lookup applies to it. `MENTIONS` runs `Article → Organization` (24.5k edges), which is why path-intent notebooks start from an `Article`.
+
+Index names are per-database, so anything naming one is pinned to a database. The older `companies` database on the same server is laid out differently (`entity` fulltext over `Person`/`Organization` `name`, `news` vector on `Chunk.embedding`, `news_fulltext` on `Chunk.text`, and four vector indexes on `Chunk`) — that layout is what the tests and notebook 01 originally assumed, and it no longer holds. `Organization` carries both `name` and `fullName`, and the fulltext index covers only `fullName`: a fulltext hit set and a `name`-equality hit set are different node sets (fulltext "Apple" returns `Apple Music`/`Apple Ads`/`Apple Inc.`; exact "Apple" returns the three orgs actually named `Apple`).
+
+**Candidate capping fills alphabetically.** `cap_outgoing_edges` visits relationship types in name order and then trims to `total_cap` (default 60), so on a supernode the alphabetically late types are quietly dropped: Apple Inc. has 26 `HAS_COMPETITOR` edges but reports "0 of 26 edges considered", because `APPLIED_FOR`…`HAS_CATEGORY` already consumed the budget. This is load-bearing when choosing a start node or a goal — a goal about competitors is unreachable from Apple here but reachable from Google, whose cap does include `HAS_COMPETITOR`. Raising `total_cap` (a parameter, not a constant) is the lever.
 
 ## Notebooks
 
