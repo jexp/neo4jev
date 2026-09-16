@@ -125,7 +125,7 @@ tasks:
       path_intent mode returns multiple distinct paths when multiple branches score well.
       Write one integration test making a single real TypeSafe system_one call combined with
       one real Neo4j hop (gated on required env vars being present).
-    status: in_progress
+    status: completed
     dependencies:
       - task-002
       - task-003
@@ -137,7 +137,7 @@ tasks:
       - "All three GoalSpec modes (free_text, target_node, path_intent) are implemented, with path_intent returning top-N distinct paths"
       - "tests/unit/test_navigator_scoring.py passes with a mocked TypeSafe client, no network access"
       - "tests/integration/test_navigator_live.py passes (or is properly skipped when credentials are absent) against real TypeSafe + Neo4j"
-    completed_at: null
+    completed_at: 2026-09-16T01:10:26Z
 
   - id: task-006
     title: 'Implement viz.py (NavResult -> styled neo4j-viz VisualizationGraph)'
