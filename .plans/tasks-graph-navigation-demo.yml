@@ -59,14 +59,14 @@ tasks:
       match whichever style is already used elsewhere in the dependency tree. Add unit tests
       that construct each type and validate basic invariants (e.g. GoalSpec discriminates
       correctly on its mode field).
-    status: in_progress
+    status: completed
     dependencies: []
     acceptance_criteria:
       - "src/neo4jev/types.py defines NavCandidate, NavStep, NavResult, BeamState, GoalSpec"
       - "GoalSpec supports exactly the three modes: free_text, target_node, path_intent"
       - "tests/unit/test_types.py passes with no network access"
       - "Types are plain dataclasses/pydantic models with no Neo4j or TypeSafe SDK imports (kept decoupled)"
-    completed_at: null
+    completed_at: 2026-09-16T00:46:56Z
 
   - id: task-004
     title: 'Implement neo4j_access.py (driver, index detection, node lookup, neighborhood fetch)'
