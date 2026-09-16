@@ -174,7 +174,7 @@ tasks:
       (exact/fulltext/vector) detect_indexes() reports as available, with a sample
       search_start_nodes() call for each detected mode. The notebook must run top-to-bottom
       without error and print/display real results from the live graph.
-    status: pending
+    status: completed
     dependencies:
       - task-004
     acceptance_criteria:
@@ -182,7 +182,7 @@ tasks:
       - "Notebook lists real labels from the graph"
       - "Notebook demonstrates detect_indexes() finding at least the entity fulltext index and the news vector index"
       - "Notebook demonstrates at least one successful search_start_nodes() call per detected mode"
-    completed_at: null
+    completed_at: 2026-09-16T01:14:53Z
 
   - id: task-008
     title: 'Notebook 02: single-hop navigator dry run'
@@ -193,14 +193,14 @@ tasks:
       Choice+Noul call, and print/display the returned probabilities, confidence, and Noul
       value so top-k/cutoff behavior can be sanity-checked visually. The notebook must run
       top-to-bottom without error and show real TypeSafe API output.
-    status: pending
+    status: completed
     dependencies:
       - task-005
     acceptance_criteria:
       - "notebooks/02_navigator_dry_run.ipynb exists and executes top-to-bottom with no errors"
       - "Notebook performs exactly one real system_one call and displays its full probabilities dict"
       - "Notebook demonstrates applying a top-k and/or cutoff selection over the returned probabilities"
-    completed_at: null
+    completed_at: 2026-09-16T01:18:18Z
 
   - id: task-009
     title: 'Notebook 03: full traversal across all three goal modes + visualization'
@@ -246,7 +246,7 @@ tasks:
       verify each control path works against the live Companies KG (screenshot or terminal
       log noting no exceptions is sufficient verification within this task; a UI automation
       test is out of scope).
-    status: pending
+    status: in_progress
     dependencies:
       - task-004
       - task-005
