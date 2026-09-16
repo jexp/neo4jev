@@ -10,6 +10,7 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "streamlit>=1.64.0",
     "typesafe-sdk>=0.6.0",
+    "watchdog>=6.0.0",
 ]
 
 [build-system]
