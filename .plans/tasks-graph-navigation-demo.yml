@@ -1,7 +1,7 @@
 feature: graph-navigation-demo
 prd: ./prd-graph-navigation-demo.md
 created_at: 2026-09-16T00:00:00Z
-updated_at: 2026-09-16T00:00:00Z
+updated_at: 2026-09-16T02:47:48Z
 
 tasks:
   - id: task-001
@@ -281,3 +281,103 @@ tasks:
       - "Every checkbox in the PRD's Acceptance Criteria section is verifiably true of the current repo state"
       - "README.md accurately reflects the final setup/usage instructions"
     completed_at: 2026-09-16T01:55:53Z
+
+  - id: task-012
+    title: "Sync docs and notebooks with the round-robin total cap"
+    description: |
+      Commit 8af7f76 changed cap_outgoing_edges from name-order trimming to round-robin
+      across relationship types, but four load-bearing descriptions still document the old
+      behavior and the notebooks' saved outputs predate the change: README.md ("relationship
+      types are visited in name order, so the total cap fills alphabetically ... HAS_COMPETITOR,
+      HAS_SUPPLIER or USES_TECHNOLOGY contribute nothing at all"), AGENTS.md ("Candidate capping
+      fills alphabetically ... Apple Inc. has 26 HAS_COMPETITOR edges but reports '0 of 26'"),
+      notebooks/02_navigator_dry_run.ipynb markdown cell 6 plus its committed output "0 of 26
+      HAS_COMPETITOR edges considered" (the pre-round-robin result, presented as "the cap
+      working as specified"), and notebooks/03_full_traversal.ipynb markdown cell 4 ("Why
+      'Google' and not the 'Apple' of notebook 02? Candidate capping visits relationship types
+      in name order ... Google's capped neighbourhood does include its competitors") whose
+      stated reason for the start-node choice is now false under round-robin. Re-execute
+      notebooks 02 and 03 against companies2 with the current code (they will show different
+      "N of M edges considered" figures and possibly different branch picks — that is expected
+      and correct), rewrite the four stale passages to describe round-robin, and keep the
+      TYPESAFE_API_KEY gating pattern intact (key is still empty).
+    status: pending
+    dependencies: []
+    acceptance_criteria:
+      - "README.md and AGENTS.md describe round-robin capping, not name-order trimming"
+      - "notebooks 02 and 03 re-executed against companies2 with current code, 0 error outputs"
+      - "notebook 02's saved output shows HAS_COMPETITOR considered from Apple (not 0 of 26)"
+      - "notebook 03's start-node rationale no longer cites name-order starvation as the reason"
+      - "uv run pytest tests/unit stays green"
+    source: review
+    completed_at: null
+
+  - id: task-013
+    title: "Collapse duplicated settings/env loading into config.py"
+    description: |
+      neo4j_access.py defines _require_env byte-identical to config.py's, and
+      settings_from_env() re-implements the whole NEO4J_URI/NEO4J_URL resolution from
+      config.py, differing only in tolerating a missing TYPESAFE_API_KEY. config.py is the
+      canonical env-owning module per README/AGENTS, so this is canonical-helper duplication
+      sitting outside its layer — two places to touch for any env-contract change. Give
+      Settings a variant constructor (e.g. Settings.from_env(*, env_file=None,
+      require_typesafe_key=True)) and have neo4j_access call
+      Settings.from_env(require_typesafe_key=False). Then delete
+      neo4j_access.settings_from_env, neo4j_access._require_env, and its os/load_dotenv
+      imports. open_access() keeps accepting a plain Settings. Update the integration tests
+      that call neo4j_access.settings_from_env to the new path.
+    status: pending
+    dependencies: []
+    acceptance_criteria:
+      - "neo4j_access.py has no settings_from_env/_require_env and no os/load_dotenv imports"
+      - "config.py Settings.from_env supports require_typesafe_key=False for Neo4j-only callers"
+      - "tests/integration/test_neo4j_companies_kg.py uses the new loader and still passes"
+      - "uv run pytest tests/unit passes with no network"
+    source: review
+    completed_at: null
+
+  - id: task-014
+    title: "Deduplicate edge-keying and drop the unused tuple return"
+    description: |
+      Positional re-keying of candidates to e0, e1, ... exists twice with the same rationale
+      comment: neo4j_access.assign_edge_keys and navigator._key_candidates (both via
+      dataclasses.replace with f"e{index}"). Collapse to one helper (natural home: types.py
+      next to NavCandidate, or re-exported from neo4j_access) since the two invariants must
+      agree — test_one_hop_options_are_opaque_ids_mapped_back_to_candidates guards exactly
+      that agreement. Also: every production caller discards assign_edge_keys's second element
+      (neo4j_access.py does keyed, _ = assign_edge_keys(...) in two places); the side table
+      callers actually use is OutgoingCandidates.mapping. Drop the tuple return so
+      assign_edge_keys returns list[NavCandidate] only, and let mapping stay the one
+      side-table.
+    status: pending
+    dependencies: []
+    acceptance_criteria:
+      - "A single shared edge-keying helper exists; navigator and neo4j_access both use it"
+      - "assign_edge_keys returns only the keyed candidate list, no unused dict"
+      - "OutgoingCandidates.mapping remains the single side-table used by callers"
+      - "uv run pytest tests/unit passes with no network"
+    source: review
+    completed_at: null
+
+  - id: task-015
+    title: "Collapse repeated GoalSpec switches into a per-hop GoalView"
+    description: |
+      GoalSpec's tagged union is re-dispatched via isinstance in six functions
+      (_stages_for, _goal_description, _noul_true_description, _choice_instructions,
+      _goal_reached_by_noul, _select_result_paths) and one_hop threads the derived
+      (goal, stages, stage_index) triple plus two `assert stages is not None` guards into
+      four of them and into _node_state. Introduce a single per-hop GoalView (frozen,
+      holding description, noul_true, stages, stage_index) built once by one function, and
+      have the six call sites consume the view — deleting the repeated branching, the
+      assert guards, and the four-wide parameter threading. Same behavior, one dispatch
+      point. Keep types.py SDK-free: the view is a navigator-local concern. All existing
+      navigator unit tests must keep passing unchanged (behavior-neutral refactor).
+    status: pending
+    dependencies: []
+    acceptance_criteria:
+      - "One per-hop GoalView is built once per hop; the six GoalSpec isinstance cascades are gone"
+      - "No `assert stages is not None` guards remain in navigator.py"
+      - "All tests/unit/test_navigator_scoring.py tests pass unmodified (behavior-neutral)"
+      - "uv run pytest tests/unit passes with no network"
+    source: review
+    completed_at: null
