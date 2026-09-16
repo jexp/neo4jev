@@ -14,14 +14,14 @@ tasks:
       Streamlit app (app/streamlit_app.py). Reference .plans/prd-graph-navigation-demo.md as the
       source of detailed requirements. This is a documentation-only task; no library code exists
       yet, so describe the target layout from the PRD.
-    status: in_progress
+    status: completed
     dependencies: []
     acceptance_criteria:
       - "README.md exists at repo root with non-empty, accurate content"
       - "README documents .env setup (all required variables named)"
       - "README documents how to run notebooks and `streamlit run app/streamlit_app.py`"
       - "README briefly explains the three goal modes (free text / target node / path intent)"
-    completed_at: null
+    completed_at: 2026-09-16T00:43:16Z
 
   - id: task-002
     title: 'Add config.py (env loading) and .env.example'

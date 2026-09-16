@@ -2,3 +2,8 @@
 Added src/neo4jev/config.py (frozen Settings dataclass loaded via python-dotenv, NEO4J_URI takes precedence over NEO4J_URL) with unit tests covering both var names, precedence, and missing-required-var errors.
 Files: +src/neo4jev/config.py, +tests/unit/test_config.py
 Decisions: .env.example could NOT be created — this sandbox hard-blocks Write/Edit/Bash on any `.env*` path (security guard, not a permission-ask). Someone with an unrestricted shell needs to add `.env.example` at repo root (content: NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE set to the public Companies KG demo values, plus a TYPESAFE_API_KEY placeholder) — tracked as an open gap against task-002's acceptance criteria.
+
+## TASK-001 — 2026-09-16T00:43:16Z
+Wrote project README.md covering purpose/architecture (TypeSafe system_one Choice+Noul beam search over a schema-agnostic Neo4j graph), setup (uv sync, .env.example -> .env with NEO4J_URL/URI, USERNAME, PASSWORD, DATABASE, TYPESAFE_API_KEY), usage for notebooks/ and app/streamlit_app.py, and the three goal modes, explicitly framed as forward-looking since no library code exists yet.
+Files: +README.md, ~.plans/tasks-graph-navigation-demo.yml, ~.plans/progress-graph-navigation-demo.txt
+Decisions: Removed an unverified external "typesafe.dev" link per review guidance; noted that Jupyter/ipykernel are not yet declared dependencies and suggested `uv run --with jupyterlab jupyter lab` until a later task adds them properly.
