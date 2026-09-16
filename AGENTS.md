@@ -45,7 +45,17 @@ Index names are per-database, so anything naming one is pinned to a database. Th
 
 ## Notebooks
 
-Notebooks under `notebooks/` are executed with their outputs saved — the saved render is the deliverable, not scratch. Executing one needs an ipykernel in the kernel environment; `uv run --with nbclient --with ipykernel --with nbformat` plus a kernelspec whose `argv` points at the running interpreter works, and `JUPYTER_PATH=<dir>` must contain `kernels/<name>/kernel.json` (the entries are Jupyter *data* dirs, so `kernels/` is part of the path).
+Notebooks under `notebooks/` are executed with their outputs saved — the saved render is the deliverable, not scratch.
+
+The kernelspec must point at an interpreter that has **both** `ipykernel` and the project's dependencies. This is the trap: `uv run --with ipykernel` resolves "the running interpreter" to a throwaway build directory (`~/.cache/uv/builds-v0/.tmpXXXX/bin/python`) that vanishes, and `.venv` does not have `ipykernel` while `uv sync` keeps it that way. The recipe that works is to install the kernel deps into the project venv and point the kernelspec there:
+
+```bash
+uv pip install ipykernel nbclient nbformat          # into .venv; pruned again by `uv sync`
+# kernels/<name>/kernel.json -> {"argv": ["<repo>/.venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"], ...}
+JUPYTER_PATH=<dir> .venv/bin/python exec_notebook.py notebooks/XX.ipynb   # nbclient, kernel_name=<name>
+```
+
+`JUPYTER_PATH` entries are Jupyter *data* dirs, so `kernels/` is part of the path (`<dir>/kernels/<name>/kernel.json`). Run nbclient with `allow_errors=False` so an exception fails the run instead of being silently saved as an error output.
 
 Careful with output size: `VisualizationGraph.render()` inlines neo4j-viz's ~8 MB JS template into **every** HTML output, so `03_full_traversal.ipynb` (three inline graph renders) is ~25 MB on disk and ~5 MB gzipped in git. Re-executing one of these notebooks rewrites that whole blob, so re-save outputs only when the notebook genuinely changed, and do not strip the renders to save space — an inline rendered graph is an acceptance criterion for `03`.
 
