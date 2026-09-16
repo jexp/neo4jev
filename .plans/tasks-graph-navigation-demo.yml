@@ -90,7 +90,7 @@ tasks:
       expected labels, detect_indexes("Organization") finds the `entity` fulltext index,
       a fulltext search for a well-known company name returns results, and
       get_outgoing_relationships on a real node returns a non-empty capped candidate list.
-    status: pending
+    status: in_progress
     dependencies:
       - task-002
       - task-003
@@ -125,7 +125,7 @@ tasks:
       path_intent mode returns multiple distinct paths when multiple branches score well.
       Write one integration test making a single real TypeSafe system_one call combined with
       one real Neo4j hop (gated on required env vars being present).
-    status: pending
+    status: in_progress
     dependencies:
       - task-002
       - task-003
@@ -154,7 +154,7 @@ tasks:
       synthetic NavResult (no real Neo4j/TypeSafe calls) and asserting the resulting
       VisualizationGraph has the expected node/relationship counts and that path vs.
       neighborhood entities receive different styling.
-    status: pending
+    status: completed
     dependencies:
       - task-003
     acceptance_criteria:
@@ -163,7 +163,7 @@ tasks:
       - "Multiple paths in one NavResult are individually distinguishable"
       - "Both a static-render helper and a render_widget-ready helper are exposed"
       - "A unit test covering styling logic passes with no network access"
-    completed_at: null
+    completed_at: 2026-09-16T01:06:47Z
 
   - id: task-007
     title: 'Notebook 01: explore graph (labels, indexes) against Companies KG'
