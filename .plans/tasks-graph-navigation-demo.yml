@@ -216,7 +216,7 @@ tasks:
       cell). Each run's NavResult is rendered via src/neo4jev/viz.py using .render() (inline
       HTML) so the path vs. neighborhood distinction is visible for each goal mode, with the
       path_intent run showing multiple distinct paths.
-    status: pending
+    status: in_progress
     dependencies:
       - task-005
       - task-006
@@ -246,7 +246,7 @@ tasks:
       verify each control path works against the live Companies KG (screenshot or terminal
       log noting no exceptions is sufficient verification within this task; a UI automation
       test is out of scope).
-    status: in_progress
+    status: completed
     dependencies:
       - task-004
       - task-005
@@ -256,7 +256,7 @@ tasks:
       - "The interactive neo4j-viz widget (render_widget/display_widget) is used, not a static iframe"
       - "A per-hop probability/trace view is shown alongside the graph"
       - "Manual run against the live Companies KG completes each of the three goal modes without unhandled exceptions"
-    completed_at: null
+    completed_at: 2026-09-16T01:28:43Z
 
   - id: task-011
     title: 'Full test pass, README/AGENTS.md polish, PRD acceptance criteria verification'
