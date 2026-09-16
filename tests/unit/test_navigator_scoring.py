@@ -142,6 +142,7 @@ def test_one_hop_asks_only_the_noul_when_a_node_has_no_relationships():
     assert hop.candidates == []
     assert hop.chosen == []
     assert hop.noul == 0.7
+    assert hop.confidence is None  # no Choice was asked, so there is no Choice confidence
 
 
 def test_one_hop_serializes_non_json_neo4j_property_values():
@@ -528,3 +529,4 @@ def test_hop_round_trips_through_the_sdk_wire_format():
     assert hop.probabilities == {"e0": 0.25, "e1": 0.75}
     assert [(c.target_element_id, p) for c, p in hop.chosen] == [("n2", 0.75), ("n1", 0.25)]
     assert hop.noul == 0.1
+    assert hop.confidence == 0.8

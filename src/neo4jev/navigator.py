@@ -91,6 +91,7 @@ class HopResult:
     probabilities: dict[str, float]
     noul: float | None
     chosen: list[tuple[NavCandidate, float]]
+    confidence: float | None = None
 
 
 class _Budget:
@@ -310,6 +311,7 @@ async def one_hop(
         chosen=_select_branches(
             probabilities, by_key, top_k=settings.top_k, cutoff=settings.cutoff
         ),
+        confidence=choice_answer.confidence if choice_answer else None,
     )
 
 
