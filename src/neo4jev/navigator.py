@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from typesafe_sdk import Choice, Noul, SystemOneResponse
@@ -26,9 +26,9 @@ from neo4jev.types import (
     NavPath,
     NavResult,
     NavStep,
-    PathIntentGoal,
     TargetNodeGoal,
     TerminationReason,
+    assign_edge_keys,
 )
 
 CHOICE_QUESTION = "next_edge"
@@ -171,66 +171,104 @@ def decompose_stages(description: str) -> list[str]:
     return [stage for stage in stages if stage] or [description.strip()]
 
 
-def _stages_for(goal: GoalSpec) -> list[str] | None:
-    if not isinstance(goal, PathIntentGoal):
-        return None
-    if goal.stages:
-        return list(goal.stages)
-    return decompose_stages(goal.pattern_description)
-
-
 def _stage_index(stages: Sequence[str], hop_index: int) -> int:
     # One stage per hop, clamped: hops beyond the stage count keep aiming at the final stage.
     return min(max(hop_index, 0), len(stages) - 1)
 
 
-def _goal_description(goal: GoalSpec, stages: Sequence[str] | None) -> str:
-    if isinstance(goal, FreeTextGoal):
-        return goal.goal
-    if isinstance(goal, TargetNodeGoal):
-        return f"Reach the node whose element id is {goal.target_element_id}."
-    assert stages is not None
-    return f"Follow the pattern described by: {goal.pattern_description}"
+@dataclass(frozen=True)
+class GoalView:
+    """One hop's resolved view of the ``GoalSpec``: the tagged union flattened to plain values.
 
+    Built by :func:`goal_view`, the module's single ``GoalSpec`` dispatch point.
+    """
 
-def _noul_true_description(goal: GoalSpec, stages: Sequence[str] | None) -> str:
-    if isinstance(goal, FreeTextGoal):
-        return goal.goal
-    if isinstance(goal, TargetNodeGoal):
-        return (
-            "The current node is the target node, whose element id is "
-            f"{goal.target_element_id}."
-        )
-    assert stages is not None
-    return (
-        "The current node satisfies the final stage of the path pattern: "
-        f"{stages[-1]}"
-    )
+    mode: str
+    description: str
+    noul_true: str
+    stages: list[str] | None = None
+    stage_index: int | None = None
+    # target_node only: the element id whose arrival terminates the search.
+    target_element_id: str | None = None
+    # path_intent only: distinct paths to return; None means the single best path.
+    top_n: int | None = None
 
-
-def _choice_instructions(goal: GoalSpec, stages: Sequence[str] | None, stage_index: int | None) -> str:
-    instruction = (
-        "Choose the single outgoing relationship that best advances the navigation goal. "
-        "The options are the relationships leaving the current node."
-    )
-    if stages is not None and stage_index is not None:
+    def choice_instructions(self) -> str:
         instruction = (
-            f"{instruction} The path pattern has {len(stages)} ordered stages: "
-            f"{'; '.join(stages)}. This hop should advance stage {stage_index + 1}: "
-            f"'{stages[stage_index]}'."
+            "Choose the single outgoing relationship that best advances the navigation goal. "
+            "The options are the relationships leaving the current node."
         )
-    else:
-        instruction = f"{instruction} Goal: {_goal_description(goal, stages)}"
-    return instruction
+        if self.stages is not None and self.stage_index is not None:
+            return (
+                f"{instruction} The path pattern has {len(self.stages)} ordered stages: "
+                f"{'; '.join(self.stages)}. This hop should advance stage {self.stage_index + 1}: "
+                f"'{self.stages[self.stage_index]}'."
+            )
+        return f"{instruction} Goal: {self.description}"
+
+    def is_target(self, element_id: str) -> bool:
+        return self.target_element_id is not None and element_id == self.target_element_id
+
+    def goal_reached_by_noul(self, noul: float | None, threshold: float) -> bool:
+        if self.target_element_id is not None:
+            return False
+        return noul is not None and noul >= threshold
+
+    def select_result_paths(
+        self, terminated: Sequence[NavPath], leftover: Sequence[NavPath]
+    ) -> list[NavPath]:
+        if self.top_n is None:
+            ranked = _rank(list(terminated))
+            if ranked:
+                return ranked[:1]
+            return _rank(list(leftover))[:1]
+
+        distinct: list[NavPath] = []
+        seen: set[tuple[str, ...]] = set()
+        for path in _rank([*terminated, *leftover]):
+            signature = _path_signature(path)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            distinct.append(path)
+            if len(distinct) >= max(1, self.top_n):
+                break
+        return distinct
+
+
+def goal_view(goal: GoalSpec, hop_index: int = 0) -> GoalView:
+    """Resolve the tagged ``GoalSpec`` into the plain values the hop at ``hop_index`` reasons with."""
+    if isinstance(goal, FreeTextGoal):
+        return GoalView(mode=goal.kind, description=goal.goal, noul_true=goal.goal)
+    if isinstance(goal, TargetNodeGoal):
+        return GoalView(
+            mode=goal.kind,
+            description=f"Reach the node whose element id is {goal.target_element_id}.",
+            noul_true=(
+                "The current node is the target node, whose element id is "
+                f"{goal.target_element_id}."
+            ),
+            target_element_id=goal.target_element_id,
+        )
+    stages = list(goal.stages) if goal.stages else decompose_stages(goal.pattern_description)
+    return GoalView(
+        mode=goal.kind,
+        description=f"Follow the pattern described by: {goal.pattern_description}",
+        noul_true=(
+            "The current node satisfies the final stage of the path pattern: "
+            f"{stages[-1]}"
+        ),
+        stages=stages,
+        stage_index=_stage_index(stages, hop_index),
+        top_n=goal.top_n,
+    )
 
 
 def _node_state(
     node: NodeContext,
-    goal: GoalSpec,
+    view: GoalView,
     *,
     hop_index: int,
-    stages: Sequence[str] | None,
-    stage_index: int | None,
     path: Sequence[NavStep],
 ) -> dict[str, Any]:
     state: dict[str, Any] = {
@@ -250,21 +288,15 @@ def _node_state(
         ],
         "hop_index": hop_index,
         "goal": {
-            "mode": goal.kind,
-            "description": _goal_description(goal, stages),
+            "mode": view.mode,
+            "description": view.description,
         },
     }
-    if stages is not None and stage_index is not None:
-        state["goal"]["stages"] = list(stages)
-        state["goal"]["current_stage_index"] = stage_index
-        state["goal"]["current_stage"] = stages[stage_index]
+    if view.stages is not None and view.stage_index is not None:
+        state["goal"]["stages"] = list(view.stages)
+        state["goal"]["current_stage_index"] = view.stage_index
+        state["goal"]["current_stage"] = view.stages[view.stage_index]
     return state
-
-
-def _key_candidates(candidates: Sequence[NavCandidate]) -> list[NavCandidate]:
-    # Options are re-keyed to opaque e0, e1, ... ids: two relationships of the same type to
-    # different targets would otherwise collapse into one option.
-    return [replace(candidate, edge_key=f"e{index}") for index, candidate in enumerate(candidates)]
 
 
 def _select_branches(
@@ -302,12 +334,31 @@ async def one_hop(
     A node with no outgoing relationships still gets its one call, asking the Noul alone: an empty
     Choice has no options to select between, and a dead-end goal node must still be recognizable.
     """
-    settings = config or NavigatorConfig()
+    return await _execute_hop(
+        client,
+        node,
+        candidates,
+        goal_view(goal, hop_index),
+        settings=config or NavigatorConfig(),
+        hop_index=hop_index,
+        path=path,
+        model=model,
+    )
 
-    keyed = _key_candidates(candidates[:MAX_CHOICE_OPTIONS])
+
+async def _execute_hop(
+    client: SystemOneClient,
+    node: NodeContext,
+    candidates: Sequence[NavCandidate],
+    view: GoalView,
+    *,
+    settings: NavigatorConfig,
+    hop_index: int,
+    path: Sequence[NavStep],
+    model: str | None,
+) -> HopResult:
+    keyed = assign_edge_keys(candidates[:MAX_CHOICE_OPTIONS])
     by_key = {candidate.edge_key: candidate for candidate in keyed}
-    stages = _stages_for(goal)
-    stage_index = _stage_index(stages, hop_index) if stages is not None else None
 
     questions: dict[str, TypeSafeQuestion] = {
         NOUL_QUESTION: Noul(
@@ -316,7 +367,7 @@ async def one_hop(
                 "before following any further relationship?"
             ),
             criteria={
-                "true": _noul_true_description(goal, stages),
+                "true": view.noul_true,
                 "false": "The current node does not satisfy the goal description.",
             },
         ),
@@ -324,11 +375,9 @@ async def one_hop(
     if keyed:
         questions[CHOICE_QUESTION] = Choice(
             criteria={candidate.edge_key: _candidate_criteria(candidate) for candidate in keyed},
-            instructions=_choice_instructions(goal, stages, stage_index),
+            instructions=view.choice_instructions(),
         )
-    state = _node_state(
-        node, goal, hop_index=hop_index, stages=stages, stage_index=stage_index, path=path
-    )
+    state = _node_state(node, view, hop_index=hop_index, path=path)
     response = await client.system_one(state, questions, model=model or settings.model)
 
     choice_answer = response.choices.get(CHOICE_QUESTION)
@@ -367,12 +416,6 @@ def _terminal_step(node_id: str, hop: HopResult) -> NavStep:
     )
 
 
-def _goal_reached_by_noul(goal: GoalSpec, noul: float | None, threshold: float) -> bool:
-    if isinstance(goal, TargetNodeGoal):
-        return False
-    return noul is not None and noul >= threshold
-
-
 def _path_signature(path: NavPath) -> tuple[str, ...]:
     # Node sequence only: parallel edges between the same pair collapse into one path.
     nodes = [step.node_id for step in path.steps]
@@ -400,12 +443,20 @@ async def _expand(
 ) -> _Expansion:
     candidates = list(fetch_candidates(state.node_id))
     budget.spend()
-    hop = await one_hop(
-        client, node, candidates, goal, config=config, hop_index=state.depth, path=state.path
+    view = goal_view(goal, state.depth)
+    hop = await _execute_hop(
+        client,
+        node,
+        candidates,
+        view,
+        settings=config,
+        hop_index=state.depth,
+        path=state.path,
+        model=None,
     )
     expansion = _Expansion(candidates=hop.candidates)
 
-    if _goal_reached_by_noul(goal, hop.noul, config.goal_threshold):
+    if view.goal_reached_by_noul(hop.noul, config.goal_threshold):
         expansion.terminated.append(
             NavPath(
                 steps=[*state.path, _terminal_step(state.node_id, hop)],
@@ -427,7 +478,7 @@ async def _expand(
             noul=hop.noul,
         )
         child = state.extend(step, candidate.target_element_id)
-        if isinstance(goal, TargetNodeGoal) and candidate.target_element_id == goal.target_element_id:
+        if view.is_target(candidate.target_element_id):
             expansion.terminated.append(
                 NavPath(
                     steps=list(child.path),
@@ -450,28 +501,6 @@ async def _expand(
 
 def _rank(paths: Sequence[NavPath]) -> list[NavPath]:
     return sorted(paths, key=lambda path: path.cumulative_log_prob, reverse=True)
-
-
-def _select_result_paths(
-    goal: GoalSpec, terminated: Sequence[NavPath], leftover: Sequence[NavPath]
-) -> list[NavPath]:
-    ranked = _rank(list(terminated))
-    if not isinstance(goal, PathIntentGoal):
-        if ranked:
-            return ranked[:1]
-        return _rank(list(leftover))[:1]
-
-    distinct: list[NavPath] = []
-    seen: set[tuple[str, ...]] = set()
-    for path in _rank([*terminated, *leftover]):
-        signature = _path_signature(path)
-        if signature in seen:
-            continue
-        seen.add(signature)
-        distinct.append(path)
-        if len(distinct) >= max(1, goal.top_n):
-            break
-    return distinct
 
 
 def _to_node_context(start: NodeContext | str) -> NodeContext:
@@ -502,8 +531,10 @@ async def navigate(
     start_node = _to_node_context(start)
     budget = _Budget(settings.max_calls)
     considered: list[NavCandidate] = []
+    # Only the hop-independent fields are used at this level: target identity and path selection.
+    view = goal_view(goal)
 
-    if isinstance(goal, TargetNodeGoal) and start_node.element_id == goal.target_element_id:
+    if view.is_target(start_node.element_id):
         return NavResult(
             start_element_id=start_node.element_id,
             paths=[
@@ -568,7 +599,7 @@ async def navigate(
     leftover = [_as_path(state, TerminationReason.BUDGET_EXHAUSTED) for state in frontier]
     return NavResult(
         start_element_id=start_node.element_id,
-        paths=_select_result_paths(goal, terminated, leftover),
+        paths=view.select_result_paths(terminated, leftover),
         neighborhood=_neighborhood(considered),
         start_label=start_node.label,
         start_props=dict(start_node.properties),
@@ -599,12 +630,14 @@ __all__ = [
     "CHOICE_QUESTION",
     "NOUL_QUESTION",
     "CandidateFetcher",
+    "GoalView",
     "HopResult",
     "NavResult",
     "NavigatorConfig",
     "NodeContext",
     "SystemOneClient",
     "decompose_stages",
+    "goal_view",
     "navigate",
     "one_hop",
     "run_navigate",

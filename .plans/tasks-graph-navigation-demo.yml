@@ -301,7 +301,7 @@ tasks:
       "N of M edges considered" figures and possibly different branch picks — that is expected
       and correct), rewrite the four stale passages to describe round-robin, and keep the
       TYPESAFE_API_KEY gating pattern intact (key is still empty).
-    status: pending
+    status: completed
     dependencies: []
     acceptance_criteria:
       - "README.md and AGENTS.md describe round-robin capping, not name-order trimming"
@@ -310,7 +310,7 @@ tasks:
       - "notebook 03's start-node rationale no longer cites name-order starvation as the reason"
       - "uv run pytest tests/unit stays green"
     source: review
-    completed_at: null
+    completed_at: 2026-09-16T02:54:37Z
 
   - id: task-013
     title: "Collapse duplicated settings/env loading into config.py"
@@ -326,7 +326,7 @@ tasks:
       neo4j_access.settings_from_env, neo4j_access._require_env, and its os/load_dotenv
       imports. open_access() keeps accepting a plain Settings. Update the integration tests
       that call neo4j_access.settings_from_env to the new path.
-    status: pending
+    status: completed
     dependencies: []
     acceptance_criteria:
       - "neo4j_access.py has no settings_from_env/_require_env and no os/load_dotenv imports"
@@ -334,7 +334,7 @@ tasks:
       - "tests/integration/test_neo4j_companies_kg.py uses the new loader and still passes"
       - "uv run pytest tests/unit passes with no network"
     source: review
-    completed_at: null
+    completed_at: 2026-09-16T02:55:12Z
 
   - id: task-014
     title: "Deduplicate edge-keying and drop the unused tuple return"
@@ -349,7 +349,7 @@ tasks:
       callers actually use is OutgoingCandidates.mapping. Drop the tuple return so
       assign_edge_keys returns list[NavCandidate] only, and let mapping stay the one
       side-table.
-    status: pending
+    status: completed
     dependencies: []
     acceptance_criteria:
       - "A single shared edge-keying helper exists; navigator and neo4j_access both use it"
@@ -357,7 +357,7 @@ tasks:
       - "OutgoingCandidates.mapping remains the single side-table used by callers"
       - "uv run pytest tests/unit passes with no network"
     source: review
-    completed_at: null
+    completed_at: 2026-09-16T02:54:10Z
 
   - id: task-015
     title: "Collapse repeated GoalSpec switches into a per-hop GoalView"
@@ -372,7 +372,7 @@ tasks:
       assert guards, and the four-wide parameter threading. Same behavior, one dispatch
       point. Keep types.py SDK-free: the view is a navigator-local concern. All existing
       navigator unit tests must keep passing unchanged (behavior-neutral refactor).
-    status: pending
+    status: completed
     dependencies: []
     acceptance_criteria:
       - "One per-hop GoalView is built once per hop; the six GoalSpec isinstance cascades are gone"
@@ -380,4 +380,4 @@ tasks:
       - "All tests/unit/test_navigator_scoring.py tests pass unmodified (behavior-neutral)"
       - "uv run pytest tests/unit passes with no network"
     source: review
-    completed_at: null
+    completed_at: 2026-09-16T02:55:03Z

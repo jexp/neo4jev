@@ -17,6 +17,7 @@ from neo4jev.types import (
     PathIntentGoal,
     TargetNodeGoal,
     TerminationReason,
+    assign_edge_keys,
 )
 
 TYPES_SOURCE = Path(__file__).resolve().parents[2] / "src/neo4jev/types.py"
@@ -66,6 +67,35 @@ def test_nav_candidate_source_fields_default_for_hop_local_use():
     )
     assert candidate.source_element_id == ""
     assert candidate.source_label == ""
+
+
+def test_assign_edge_keys_is_positional_and_does_not_collapse_same_rel_type():
+    first = _make_candidate("")
+    second = dataclasses.replace(
+        first, rel_element_id="rel-2", target_element_id="node-3", target_props={"name": "Bob"}
+    )
+
+    keyed = assign_edge_keys([first, second])
+
+    assert [candidate.edge_key for candidate in keyed] == ["e0", "e1"]
+    assert keyed[1].target_element_id == "node-3"
+    assert keyed[0].rel_type == keyed[1].rel_type
+
+
+def test_assign_edge_keys_of_empty_list_returns_a_list():
+    keyed = assign_edge_keys([])
+
+    assert keyed == []
+    assert isinstance(keyed, list)
+
+
+def test_assign_edge_keys_leaves_the_input_candidates_untouched():
+    original = _make_candidate("stale-key")
+
+    keyed = assign_edge_keys([original])
+
+    assert keyed[0].edge_key == "e0"
+    assert original.edge_key == "stale-key"
 
 
 def test_nav_step_keeps_all_candidates_considered_not_just_chosen():

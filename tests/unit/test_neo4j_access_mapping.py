@@ -15,7 +15,6 @@ from neo4jev.neo4j_access import (
     DEFAULT_TOTAL_CAP,
     GraphNode,
     Neo4jAccess,
-    assign_edge_keys,
     cap_outgoing_edges,
     default_embedder,
     escape_lucene,
@@ -78,29 +77,6 @@ class FakeDriver:
 
 def _access(handler):
     return Neo4jAccess(FakeDriver(handler), database="companies")
-
-
-# --------------------------------------------------------------------------
-# edge_key generation / mapping
-# --------------------------------------------------------------------------
-
-
-def test_assign_edge_keys_is_positional_and_maps_back():
-    candidates = [_candidate("HAS_SUBSIDIARY", 0), _candidate("HAS_SUBSIDIARY", 1)]
-
-    keyed, mapping = assign_edge_keys(candidates)
-
-    assert [c.edge_key for c in keyed] == ["e0", "e1"]
-    assert set(mapping) == {"e0", "e1"}
-    assert mapping["e1"].target_element_id == candidates[1].target_element_id
-    # Same relationship type must not collapse into one key.
-    assert keyed[0].edge_key != keyed[1].edge_key
-
-
-def test_assign_edge_keys_of_empty_list():
-    keyed, mapping = assign_edge_keys([])
-    assert keyed == []
-    assert mapping == {}
 
 
 # --------------------------------------------------------------------------
@@ -762,31 +738,23 @@ def test_open_access_builds_driver_from_settings_and_closes_it(monkeypatch):
     assert fake_driver.closed is True
 
 
-def test_settings_from_env_reads_neo4j_vars_without_typesafe_key(monkeypatch):
-    for key in ("NEO4J_URL", "TYPESAFE_API_KEY"):
-        monkeypatch.delenv(key, raising=False)
+def test_open_access_without_settings_tolerates_a_missing_typesafe_key(monkeypatch):
+    fake_driver = FakeDriver()
+
+    def fake_driver_factory(uri, auth=None, **kwargs):
+        return fake_driver
+
+    monkeypatch.setattr(neo4j_access.neo4j.GraphDatabase, "driver", fake_driver_factory)
+    monkeypatch.setattr("neo4jev.config.load_dotenv", lambda *a, **k: None)
     monkeypatch.setenv("NEO4J_URI", "neo4j+s://demo.neo4jlabs.com:7687")
     monkeypatch.setenv("NEO4J_USERNAME", "companies")
     monkeypatch.setenv("NEO4J_PASSWORD", "companies")
     monkeypatch.setenv("NEO4J_DATABASE", "companies")
-    monkeypatch.setattr(neo4j_access, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
 
-    settings = neo4j_access.settings_from_env()
+    with open_access() as access:
+        assert isinstance(access, Neo4jAccess)
+        assert access.database == "companies"
 
-    assert settings.neo4j_uri == "neo4j+s://demo.neo4jlabs.com:7687"
-    assert settings.typesafe_api_key == ""
-
-
-def test_settings_from_env_accepts_neo4j_url_alias_and_requires_uri(monkeypatch):
-    monkeypatch.delenv("NEO4J_URI", raising=False)
-    monkeypatch.setenv("NEO4J_URL", "neo4j+s://demo.neo4jlabs.com:7687")
-    monkeypatch.setenv("NEO4J_USERNAME", "companies")
-    monkeypatch.setenv("NEO4J_PASSWORD", "companies")
-    monkeypatch.setenv("NEO4J_DATABASE", "companies")
-    monkeypatch.setattr(neo4j_access, "load_dotenv", lambda *a, **k: None)
-
-    assert neo4j_access.settings_from_env().neo4j_uri.startswith("neo4j+s://")
-
-    monkeypatch.delenv("NEO4J_URL", raising=False)
-    with pytest.raises(ValueError, match="NEO4J_URI"):
-        neo4j_access.settings_from_env()
+    assert fake_driver.verified == 1
+    assert fake_driver.closed is True

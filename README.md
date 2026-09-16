@@ -119,12 +119,14 @@ prints them for whatever instance you point at:
 | Embeddings | the server's `genai` plugin is unconfigured and no provider key is supplied, so `neo4j_access.default_embedder` is a deterministic hash-seeded placeholder — vector search is dimensionally real but not semantically meaningful. Pass a real `embedder` to `open_access()` to change that. |
 
 **One more property worth knowing before reading a traversal:** each hop is capped at ≤10
-relationships per type and ≤60 in total (REQ-NF-005), and relationship types are visited in
-*name* order, so the total cap fills alphabetically. On a supernode such as Apple Inc. (1354
-outgoing edges) the 60-edge budget is spent on patent and classification edges before the
-alphabet reaches `HAS_COMPETITOR`, `HAS_SUPPLIER` or `USES_TECHNOLOGY` — those contribute
-nothing at all to that hop. Pick a start node whose capped neighbourhood can express the
-goal, or raise `total_cap` (it is a parameter, not a constant).
+relationships per type and ≤60 in total (REQ-NF-005). The per-type cap is applied first, and
+the 60-edge budget is then filled **round-robin across relationship types in name order** —
+one edge per type per pass — rather than draining one type before starting the next. That
+interleaving is what keeps a type with a large edge count from crowding the rest out: on a
+supernode such as Apple Inc. (1354 outgoing edges) the budget spreads over all 17 of its
+relationship types, and `HAS_COMPETITOR` contributes 4 of its 26 edges instead of nothing.
+The cap still means each supernode is only *sampled* — the edges it left out can never be
+chosen — so raise `total_cap` (a parameter, not a constant) to widen that window.
 
 ## Usage
 

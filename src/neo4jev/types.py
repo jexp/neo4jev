@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Literal, Union
@@ -23,6 +24,18 @@ class NavCandidate:
     target_props: dict[str, Any]
     source_element_id: str = ""
     source_label: str = ""
+
+
+def assign_edge_keys(candidates: Sequence[NavCandidate]) -> list[NavCandidate]:
+    """Key candidates by synthetic opaque ids (``e0``, ``e1``, ...).
+
+    Keying by relationship type would collapse several relationships of the same
+    type to different targets into one option, so the ids stay positional.
+    """
+    return [
+        replace(candidate, edge_key=f"e{index}")
+        for index, candidate in enumerate(candidates)
+    ]
 
 
 @dataclass(frozen=True)

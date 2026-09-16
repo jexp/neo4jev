@@ -12,18 +12,16 @@ names are read from the live database (``SHOW INDEXES``, ``labels()``,
 from __future__ import annotations
 
 import hashlib
-import os
 import random
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import neo4j
-from dotenv import load_dotenv
 
 from neo4jev.config import Settings
-from neo4jev.types import NavCandidate
+from neo4jev.types import NavCandidate, assign_edge_keys
 
 LookupMode = Literal["exact", "fulltext", "vector"]
 LOOKUP_MODES: tuple[LookupMode, ...] = ("exact", "fulltext", "vector")
@@ -135,24 +133,6 @@ class OutgoingCandidates:
         return self.candidates[index]
 
 
-def assign_edge_keys(
-    candidates: Sequence[NavCandidate],
-) -> tuple[list[NavCandidate], dict[str, NavCandidate]]:
-    """Key candidates by synthetic opaque ids (``e0``, ``e1``, ...).
-
-    Keying by relationship type would collapse several relationships of the same
-    type to different targets into one option, so the ids stay positional.
-    """
-    keyed: list[NavCandidate] = []
-    mapping: dict[str, NavCandidate] = {}
-    for index, candidate in enumerate(candidates):
-        edge_key = f"e{index}"
-        keyed_candidate = replace(candidate, edge_key=edge_key)
-        keyed.append(keyed_candidate)
-        mapping[edge_key] = keyed_candidate
-    return keyed, mapping
-
-
 def cap_outgoing_edges(
     per_type_edges: Mapping[str, tuple[int, Sequence[NavCandidate]]],
     *,
@@ -189,7 +169,7 @@ def cap_outgoing_edges(
             by_type_considered.get(candidate.rel_type, 0) + 1
         )
 
-    keyed, _ = assign_edge_keys(selected)
+    keyed = assign_edge_keys(selected)
     return OutgoingCandidates(
         source_element_id=source_element_id,
         source_label=source_label,
@@ -263,43 +243,18 @@ def _candidate_from_edge(
     )
 
 
-def settings_from_env() -> Settings:
-    """Neo4j-only settings built from the environment.
-
-    Deliberately not ``Settings.from_env()``: this layer must not require a
-    TypeSafe key, since index exploration and neighbourhood fetches never call
-    the TypeSafe API.
-    """
-    load_dotenv()
-    uri = os.environ.get("NEO4J_URI") or os.environ.get("NEO4J_URL")
-    if not uri:
-        raise ValueError(
-            "Missing required environment variable: NEO4J_URI (or NEO4J_URL)"
-        )
-    return Settings(
-        neo4j_uri=uri,
-        neo4j_username=_require_env("NEO4J_USERNAME"),
-        neo4j_password=_require_env("NEO4J_PASSWORD"),
-        neo4j_database=_require_env("NEO4J_DATABASE"),
-        typesafe_api_key=os.environ.get("TYPESAFE_API_KEY", ""),
-    )
-
-
-def _require_env(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise ValueError(f"Missing required environment variable: {name}")
-    return value
-
-
 @contextmanager
 def open_access(
     settings: Settings | None = None,
     *,
     embedder: Embedder | None = None,
 ) -> Iterator["Neo4jAccess"]:
-    """Open a driver from settings (or the environment) and yield an access layer."""
-    settings = settings or settings_from_env()
+    """Open a driver from settings (or the environment) and yield an access layer.
+
+    Falls back to ``Settings.from_env(require_typesafe_key=False)``: this layer never
+    calls the TypeSafe API, so a missing key must not block graph access.
+    """
+    settings = settings or Settings.from_env(require_typesafe_key=False)
     driver = neo4j.GraphDatabase.driver(
         settings.neo4j_uri,
         auth=(settings.neo4j_username, settings.neo4j_password),
@@ -606,5 +561,4 @@ class Neo4jAccess:
                     source_label=source_labels[0] if source_labels else "",
                 )
             )
-        keyed, _ = assign_edge_keys(candidates)
-        return keyed
+        return assign_edge_keys(candidates)
