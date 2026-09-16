@@ -41,6 +41,11 @@ _LOG_FLOOR = 1e-12
 _STAGE_DELIMITER = "\x00"
 _STAGE_SEPARATORS = ("->", "=>", " then ", ";", "\n", ",")
 
+# Long text (article bodies, descriptions) dominates the request payload without helping the
+# choice; vector/list properties are dropped outright.
+MAX_PROPERTY_CHARS = 200
+_DROP = object()
+
 
 @dataclass(frozen=True)
 class NavigatorConfig:
@@ -118,12 +123,39 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
+def _prompt_value(value: Any) -> Any:
+    """A property value as the model should see it, or ``_DROP`` to omit the property."""
+    if isinstance(value, (list, tuple, set, frozenset)):
+        # Embeddings and other collections say nothing about the decision and cost input tokens.
+        return _DROP
+    if isinstance(value, Mapping):
+        nested: dict[str, Any] = {}
+        for key, item in value.items():
+            trimmed = _prompt_value(item)
+            if trimmed is not _DROP:
+                nested[str(key)] = trimmed
+        return nested
+    if isinstance(value, str) and len(value) > MAX_PROPERTY_CHARS:
+        return value[:MAX_PROPERTY_CHARS] + "..."
+    return _jsonable(value)
+
+
+def _prompt_props(props: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Properties with vectors/lists dropped and long text truncated, for request payloads."""
+    reduced: dict[str, Any] = {}
+    for key, value in (props or {}).items():
+        trimmed = _prompt_value(value)
+        if trimmed is not _DROP:
+            reduced[str(key)] = trimmed
+    return reduced
+
+
 def _candidate_criteria(candidate: NavCandidate) -> dict[str, Any]:
     return {
         "relationship_type": candidate.rel_type,
-        "relationship_properties": _jsonable(candidate.rel_props),
+        "relationship_properties": _prompt_props(candidate.rel_props),
         "target_label": candidate.target_label,
-        "target_properties": _jsonable(candidate.target_props),
+        "target_properties": _prompt_props(candidate.target_props),
     }
 
 
@@ -205,7 +237,7 @@ def _node_state(
         "current_node": {
             "element_id": node.element_id,
             "label": node.label,
-            "properties": _jsonable(node.properties),
+            "properties": _prompt_props(node.properties),
         },
         "path_so_far": [
             {

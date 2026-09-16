@@ -159,6 +159,49 @@ def test_one_hop_serializes_non_json_neo4j_property_values():
     assert criteria["e0"]["relationship_properties"] == {"since": "2026-09-16T00:00:00Z"}
 
 
+def test_prompt_properties_drop_vectors_and_lists():
+    candidates = [
+        candidate(
+            "r0",
+            "n-a",
+            rel_props={"embedding": [0.1] * 1536, "tags": ["a", "b"], "weight": 0.7},
+        )
+    ]
+    client = FakeClient()
+
+    run(one_hop(client, NodeContext(element_id="n0"), candidates, FreeTextGoal(goal="x")))
+
+    props = client.calls[0].questions[CHOICE_QUESTION].criteria["e0"]["relationship_properties"]
+    assert props == {"weight": 0.7}
+
+
+def test_prompt_properties_truncate_long_text():
+    long_text = "x" * 500
+    candidates = [candidate("r0", "n-a", target_props={"body": long_text, "name": "Short"})]
+    client = FakeClient()
+
+    run(one_hop(client, NodeContext(element_id="n0"), candidates, FreeTextGoal(goal="x")))
+
+    props = client.calls[0].questions[CHOICE_QUESTION].criteria["e0"]["target_properties"]
+    assert props["name"] == "Short"
+    assert len(props["body"]) == nav.MAX_PROPERTY_CHARS + 3
+    assert props["body"].endswith("...")
+
+
+def test_current_node_properties_are_reduced_too():
+    client = FakeClient()
+    node = NodeContext(
+        element_id="n0",
+        label="Chunk",
+        properties={"embedding": [0.5] * 768, "text": "y" * 400, "page": 3},
+    )
+
+    run(one_hop(client, node, [candidate("r0", "n-a")], FreeTextGoal(goal="x")))
+
+    props = client.calls[0].state["current_node"]["properties"]
+    assert props == {"text": "y" * nav.MAX_PROPERTY_CHARS + "...", "page": 3}
+
+
 def _branches(probabilities: dict[str, float], **kwargs):
     by_key = {f"e{i}": candidate(f"r{i}", f"n{i}") for i in range(len(probabilities))}
     return nav._select_branches(probabilities, by_key, **kwargs)
@@ -472,13 +515,13 @@ def test_one_hop_serializes_nested_property_containers():
         def __str__(self) -> str:
             return "2020"
 
-    candidates = [candidate("r0", "n1", target_props={"a": {"b": [1, {"c": Temporal()}]}})]
+    candidates = [candidate("r0", "n1", target_props={"a": {"b": Temporal(), "c": 1}})]
     client = FakeClient()
 
     run(one_hop(client, NodeContext(element_id="n0"), candidates, FreeTextGoal(goal="x")))
 
     criteria = client.calls[0].questions[CHOICE_QUESTION].criteria
-    assert criteria["e0"]["target_properties"] == {"a": {"b": [1, {"c": "2020"}]}}
+    assert criteria["e0"]["target_properties"] == {"a": {"b": "2020", "c": 1}}
 
 
 def test_navigator_config_rejects_invalid_values():
