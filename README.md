@@ -126,6 +126,14 @@ alphabet reaches `HAS_COMPETITOR`, `HAS_SUPPLIER` or `USES_TECHNOLOGY` — those
 nothing at all to that hop. Pick a start node whose capped neighbourhood can express the
 goal, or raise `total_cap` (it is a parameter, not a constant).
 
+For API requests, each node or relationship property map is summarized to at most
+1,200 characters. Short values are retained first; long text, aliases and vectors
+may be previewed or omitted, with an explicit truncation marker. Full properties
+remain in navigation results and visualization. Goals requiring omitted details
+may need more focused graph data. This is a per-map character budget, not a
+request-wide token limit: large candidate sets, goals or path histories can still
+exceed the API's input limit.
+
 ## Usage
 
 ### Notebooks
