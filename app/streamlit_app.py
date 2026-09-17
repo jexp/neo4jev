@@ -30,6 +30,7 @@ from neo4jev.types import (
     GoalSpec,
     NavCandidate,
     NavResult,
+    NavStep,
     PathIntentGoal,
     TargetNodeGoal,
 )
@@ -256,18 +257,40 @@ def render_trace(result: NavResult) -> None:
             if not path.steps:
                 st.write("The start node already satisfied the goal; no hop was taken.")
             for hop_index, step in enumerate(path.steps):
-                chosen = ", ".join(
-                    f"{candidate.rel_type} → {_candidate_caption(candidate)}"
-                    for candidate in step.chosen
-                )
-                noul = f"{step.noul:.3f}" if step.noul is not None else "n/a"
-                st.markdown(
-                    f"**Hop {hop_index + 1}** at `{step.node_id}` · Noul {noul} · "
-                    f"log-prob {step.log_prob:.2f} · chose {chosen or '— (none)'}"
-                )
-                rows = _probability_rows(step.candidates, step.probabilities, step.chosen)
-                if rows:
-                    st.dataframe(rows, hide_index=True)
+                _render_hop(step, hop_index)
+
+
+def _render_hop(step: NavStep, hop_index: int) -> None:
+    """One hop: what Jev was offered, what it picked, and the Noul verdict."""
+    # Noul verdict — the goal-reached read on the current node.
+    if step.noul is None:
+        noul_text = "n/a (no Noul asked)"
+    else:
+        verdict = "goal reached" if step.noul >= 0.5 else "not yet"
+        noul_text = f"{step.noul:.3f} → {verdict}"
+
+    # What was picked.
+    if step.chosen:
+        picks = ", ".join(
+            f"`{c.edge_key}` {c.rel_type} → **{_candidate_caption(c)}** (p {step.probabilities.get(c.edge_key, 0.0):.3f})"
+            for c in step.chosen
+        )
+    else:
+        picks = "— (none — path ends here)"
+
+    st.markdown(
+        f"**Hop {hop_index + 1}** from `{step.node_id}`\n\n"
+        f"- Picked: {picks}\n"
+        f"- Noul: {noul_text} · step log-prob {step.log_prob:.2f}"
+    )
+
+    rows = _probability_rows(step.candidates, step.probabilities, step.chosen)
+    if rows:
+        st.caption(f"Relationship options offered ({len(rows)}), ranked by probability:")
+        st.dataframe(rows, hide_index=True)
+
+
+_PROBABILITY_TABLE_MAX_ROWS = 20
 
 
 def _probability_rows(
@@ -277,16 +300,27 @@ def _probability_rows(
 ) -> list[dict[str, Any]]:
     by_key = {candidate.edge_key: candidate for candidate in candidates}
     chosen_keys = {candidate.edge_key for candidate in chosen}
+    ranked = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
     rows = []
-    for edge_key, probability in sorted(probabilities.items(), key=lambda item: item[1], reverse=True):
+    for edge_key, probability in ranked[:_PROBABILITY_TABLE_MAX_ROWS]:
         candidate = by_key.get(edge_key)
         rows.append(
             {
+                "": "→" if edge_key in chosen_keys else "",
                 "edge": edge_key,
                 "probability": round(probability, 4),
-                "chosen": edge_key in chosen_keys,
                 "relationship": candidate.rel_type if candidate else "?",
                 "target": _candidate_caption(candidate) if candidate else edge_key,
+            }
+        )
+    if len(ranked) > _PROBABILITY_TABLE_MAX_ROWS:
+        rows.append(
+            {
+                "": "",
+                "edge": f"… +{len(ranked) - _PROBABILITY_TABLE_MAX_ROWS} more (probability 0)",
+                "probability": None,
+                "relationship": "",
+                "target": "",
             }
         )
     return rows
