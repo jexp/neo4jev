@@ -56,6 +56,7 @@ class NavigatorConfig:
     beam_width: int = 4
     goal_threshold: float = 0.5
     model: str | None = None
+    direction: str = "out"
 
     def __post_init__(self) -> None:
         for name in ("max_depth", "max_calls", "top_k", "beam_width"):
@@ -64,6 +65,8 @@ class NavigatorConfig:
         for name in ("cutoff", "goal_threshold"):
             if not 0.0 <= getattr(self, name) <= 1.0:
                 raise ValueError(f"{name} must be between 0 and 1, got {getattr(self, name)}")
+        if self.direction not in ("out", "in", "both"):
+            raise ValueError(f"direction must be 'out', 'in' or 'both', got {self.direction!r}")
 
 
 @dataclass(frozen=True)
@@ -151,12 +154,23 @@ def _prompt_props(props: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _candidate_criteria(candidate: NavCandidate) -> dict[str, Any]:
-    return {
+    criteria = {
         "relationship_type": candidate.rel_type,
         "relationship_properties": _prompt_props(candidate.rel_props),
         "target_label": candidate.target_label,
         "target_properties": _prompt_props(candidate.target_props),
     }
+    if candidate.direction == "in":
+        # The edge points at the current node: following it moves to the source side,
+        # whose label/properties the fetch didn't carry. Say so explicitly rather than
+        # leaving the model to assume target_* describes where it would arrive.
+        criteria["direction"] = "in"
+        criteria["note"] = (
+            "This relationship points AT the current node. Following it walks backward "
+            "to the node it comes from (see source_label)."
+        )
+        criteria["source_label"] = candidate.source_label
+    return criteria
 
 
 def decompose_stages(description: str) -> list[str]:
@@ -281,8 +295,9 @@ def _node_state(
             {
                 "from_node": step.node_id,
                 "relationship_type": step.chosen[0].rel_type if step.chosen else None,
-                "to_node": step.chosen[0].target_element_id if step.chosen else step.node_id,
-                "to_label": step.chosen[0].target_label if step.chosen else None,
+                "to_node": step.chosen[0].next_element_id if step.chosen else step.node_id,
+                "to_label": step.chosen[0].next_label if step.chosen else None,
+                "direction": step.chosen[0].direction if step.chosen else None,
             }
             for step in path
         ],
@@ -420,7 +435,7 @@ def _path_signature(path: NavPath) -> tuple[str, ...]:
     # Node sequence only: parallel edges between the same pair collapse into one path.
     nodes = [step.node_id for step in path.steps]
     if path.steps and path.steps[-1].chosen:
-        nodes.append(path.steps[-1].chosen[0].target_element_id)
+        nodes.append(path.steps[-1].chosen[0].next_element_id)
     return tuple(nodes)
 
 
@@ -467,7 +482,8 @@ async def _expand(
         return expansion
 
     for candidate, probability in hop.chosen:
-        if candidate.target_element_id in state.visited:
+        next_id = candidate.next_element_id
+        if not next_id or next_id in state.visited:
             continue
         step = NavStep(
             node_id=state.node_id,
@@ -477,8 +493,8 @@ async def _expand(
             candidates=hop.candidates,
             noul=hop.noul,
         )
-        child = state.extend(step, candidate.target_element_id)
-        if view.is_target(candidate.target_element_id):
+        child = state.extend(step, next_id)
+        if view.is_target(next_id):
             expansion.terminated.append(
                 NavPath(
                     steps=list(child.path),
@@ -488,10 +504,10 @@ async def _expand(
             )
         else:
             expansion.children.append(child)
-            expansion.nodes[candidate.target_element_id] = NodeContext(
-                element_id=candidate.target_element_id,
-                label=candidate.target_label,
-                properties=candidate.target_props,
+            expansion.nodes[next_id] = NodeContext(
+                element_id=next_id,
+                label=candidate.next_label,
+                properties=candidate.next_props,
             )
 
     if not expansion.children and not expansion.terminated:

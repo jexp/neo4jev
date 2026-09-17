@@ -252,13 +252,16 @@ def test_get_outgoing_relationships_parses_caps_and_reports_truncation():
                         "rel_id": f"r{i}",
                         "rel_type": "HAS_SUPPLIER",
                         "rel_props": {"since": i},
-                        "target_id": f"t{i}",
-                        "target_labels": ["Organization"],
-                        "target_props": {"name": f"Supplier {i}"},
+                        "start_id": "n:1",
+                        "start_labels": ["Organization"],
+                        "start_props": {},
+                        "end_id": f"t{i}",
+                        "end_labels": ["Organization"],
+                        "end_props": {"name": f"Supplier {i}"},
                     }
                     for i in range(params["rel_type_cap"])
                 ],
-                "source_labels": ["Organization", "Company"],
+                "node_labels": ["Organization", "Company"],
             },
             {
                 "rel_type": "HAS_CEO",
@@ -268,12 +271,15 @@ def test_get_outgoing_relationships_parses_caps_and_reports_truncation():
                         "rel_id": "rceo",
                         "rel_type": "HAS_CEO",
                         "rel_props": {},
-                        "target_id": "tceo",
-                        "target_labels": ["Person"],
-                        "target_props": {"name": "Tim Cook"},
+                        "start_id": "n:1",
+                        "start_labels": ["Organization"],
+                        "start_props": {},
+                        "end_id": "tceo",
+                        "end_labels": ["Person"],
+                        "end_props": {"name": "Tim Cook"},
                     }
                 ],
-                "source_labels": ["Organization", "Company"],
+                "node_labels": ["Organization", "Company"],
             },
         ]
 
@@ -320,7 +326,7 @@ def test_get_outgoing_relationships_honours_total_cap_and_empty_node():
                     }
                     for i in range(12)
                 ],
-                "source_labels": ["Organization"],
+                "node_labels": ["Organization"],
             }
         ]
 
@@ -672,7 +678,82 @@ def test_quote_label_escapes_backticks():
         _quote_label("")
 
 
-def test_get_node_neighborhood_maps_both_endpoints_and_skips_path_edges():
+def test_get_outgoing_relationships_incoming_direction_marks_candidates_in():
+    """direction='in' queries incoming edges and marks candidates direction='in',
+    with source_* carrying the far endpoint (the node the traversal would reach)."""
+    captured = {}
+
+    def handler(query, params):
+        captured["query"] = query
+        return [
+            {
+                "rel_type": "HAS_CHUNK",
+                "total": 3,
+                "kept": [
+                    {
+                        "rel_id": "r1",
+                        "rel_type": "HAS_CHUNK",
+                        "rel_props": {},
+                        "start_id": "a:1",
+                        "start_labels": ["Article"],
+                        "start_props": {"title": "Some article"},
+                        "end_id": "c:9",  # current node (the Chunk)
+                        "end_labels": ["Chunk"],
+                        "end_props": {"text": "chunk text"},
+                    }
+                ],
+                "node_labels": ["Chunk"],
+            }
+        ]
+
+    access = _access(handler)
+    result = access.get_outgoing_relationships("c:9", direction="in")
+
+    assert "MATCH (n)<-[r]-(t)" in captured["query"]
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.direction == "in"
+    # source_* is the edge's real start (the Article), the node you'd walk to.
+    assert candidate.source_element_id == "a:1"
+    assert candidate.source_label == "Article"
+    # target_* is the edge's end: the current node (the Chunk).
+    assert candidate.target_element_id == "c:9"
+    assert candidate.target_label == "Chunk"
+    assert candidate.target_props == {"text": "chunk text"}
+    # next_* resolves to the far side (the source of the incoming edge).
+    assert candidate.next_element_id == "a:1"
+    assert candidate.next_label == "Article"
+    assert candidate.next_props == {}
+
+
+def test_get_outgoing_relationships_rejects_bad_direction():
+    access = _access(lambda q, p: [])
+    with pytest.raises(ValueError, match="direction"):
+        access.get_outgoing_relationships("n:1", direction="sideways")
+
+
+def test_navcandidate_next_resolves_direction():
+    from neo4jev.types import NavCandidate
+
+    out = NavCandidate(
+        edge_key="", rel_element_id="r", rel_type="T", rel_props={},
+        target_element_id="t", target_label="Target", target_props={"name": "T"},
+        source_element_id="s", source_label="Source",
+    )
+    assert out.direction == "out"
+    assert out.next_element_id == "t"
+    assert out.next_label == "Target"
+    assert out.next_props == {"name": "T"}
+
+    incoming = NavCandidate(
+        edge_key="", rel_element_id="r", rel_type="T", rel_props={},
+        target_element_id="t", target_label="Target", target_props={"name": "T"},
+        source_element_id="s", source_label="Source", direction="in",
+    )
+    assert incoming.direction == "in"
+    assert incoming.next_element_id == "s"
+    assert incoming.next_label == "Source"
+    assert incoming.next_props == {}
     captured = {}
 
     def handler(query, params):

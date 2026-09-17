@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -111,6 +112,25 @@ def test_one_hop_options_are_opaque_ids_mapped_back_to_candidates():
     assert [c.target_element_id for c in hop.candidates] == ["n-a", "n-b", "n-c"]
     assert [c.target_element_id for c, _ in hop.chosen] == ["n-b"]
     assert hop.noul == 0.0
+
+
+def test_one_hop_marks_incoming_candidates_with_direction():
+    """direction='in' candidates carry a direction note and source_label in the
+    criteria so the model knows the edge points at the current node."""
+    incoming = candidate("r-in", "n-target", rel_type="HAS_CHUNK")
+    incoming = replace(incoming, direction="in", source_element_id="a:1", source_label="Article")
+    candidates = [incoming]
+    client = FakeClient(weights={"n-target": {"e0": 1.0}})
+
+    hop = run(one_hop(client, NodeContext(element_id="n-target", label="Chunk"), candidates,
+                      FreeTextGoal(goal="x"), config=NavigatorConfig(top_k=1, cutoff=0.0)))
+
+    criteria = client.calls[0].questions[CHOICE_QUESTION].criteria
+    assert criteria["e0"]["direction"] == "in"
+    assert criteria["e0"]["source_label"] == "Article"
+    assert "points AT the current node" in criteria["e0"]["note"]
+    # Following an incoming candidate moves to its source, not its target.
+    assert hop.chosen[0][0].next_element_id == "a:1"
 
 
 def test_one_hop_issues_one_call_carrying_both_questions_and_node_state():

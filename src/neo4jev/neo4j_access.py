@@ -228,18 +228,23 @@ def _candidate_from_edge(
     *,
     source_element_id: str = "",
     source_label: str = "",
+    direction: str = "out",
 ) -> NavCandidate:
-    target_labels = tuple(edge["target_labels"] or ())
+    # The query returns the edge's real start/end nodes, so both endpoints are
+    # always known regardless of which direction the caller fetched in.
+    end_labels = tuple(edge.get("end_labels") or edge.get("target_labels") or ())
+    start_labels = tuple(edge.get("start_labels") or ())
     return NavCandidate(
         edge_key="",
         rel_element_id=edge["rel_id"],
         rel_type=edge["rel_type"],
         rel_props=dict(edge["rel_props"] or {}),
-        target_element_id=edge["target_id"],
-        target_label=target_labels[0] if target_labels else "",
-        target_props=dict(edge["target_props"] or {}),
-        source_element_id=source_element_id,
-        source_label=source_label,
+        target_element_id=edge.get("end_id", edge.get("target_id", "")),
+        target_label=end_labels[0] if end_labels else "",
+        target_props=dict(edge.get("end_props") or edge.get("target_props") or {}),
+        source_element_id=edge.get("start_id", source_element_id),
+        source_label=start_labels[0] if start_labels else source_label,
+        direction=direction,
     )
 
 
@@ -453,27 +458,46 @@ class Neo4jAccess:
         node_id: str,
         rel_type_cap: int = DEFAULT_REL_TYPE_CAP,
         total_cap: int = DEFAULT_TOTAL_CAP,
+        direction: str = "out",
     ) -> OutgoingCandidates:
+        """Capped relationships from ``node_id``, in the requested direction.
+
+        ``direction`` is "out" (edges leaving the node, the default), "in" (edges
+        pointing at it — e.g. `Article -[:HAS_CHUNK]-> Chunk`), or "both". For
+        incoming edges the candidate's ``source_*`` fields hold the far endpoint and
+        ``direction`` is "in", so the navigator's ``next_element_id`` is the node the
+        edge comes from.
+        """
+        if direction not in ("out", "in", "both"):
+            raise ValueError(f"direction must be 'out', 'in' or 'both', got {direction!r}")
         # The per-type cap is applied in Cypher too, purely to bound how much data
         # a supernode ships over the wire; cap_outgoing_edges re-applies the same
         # rule and remains the single source of truth for the result shape.
+        direction_clause = "(n)-[r]->(t)" if direction == "out" else "(n)<-[r]-(t)" if direction == "in" else "(n)-[r]-(t)"
+        # For incoming edges the far endpoint (where following the edge would land) is
+        # startNode(r), so the query returns the edge's real start/end explicitly rather
+        # than aliasing `t` as the target.
         records = self._run(
-            """
+            f"""
             MATCH (n) WHERE elementId(n) = $node_id
-            MATCH (n)-[r]->(t)
-            WITH type(r) AS rel_type, r, t, labels(n) AS source_labels
+            MATCH {direction_clause}
+            WITH type(r) AS rel_type, r, labels(n) AS node_labels,
+                 startNode(r) AS edge_start, endNode(r) AS edge_end
             ORDER BY elementId(r)
-            WITH rel_type, source_labels,
-                 collect({
+            WITH rel_type, node_labels,
+                 collect({{
                      rel_id: elementId(r),
                      rel_type: type(r),
                      rel_props: properties(r),
-                     target_id: elementId(t),
-                     target_labels: labels(t),
-                     target_props: properties(t)
-                 }) AS edges
+                     start_id: elementId(edge_start),
+                     start_labels: labels(edge_start),
+                     start_props: properties(edge_start),
+                     end_id: elementId(edge_end),
+                     end_labels: labels(edge_end),
+                     end_props: properties(edge_end)
+                 }}) AS edges
             RETURN rel_type, size(edges) AS total, edges[0..$rel_type_cap] AS kept,
-                   source_labels
+                   node_labels
             """,
             node_id=node_id,
             rel_type_cap=rel_type_cap,
@@ -482,14 +506,13 @@ class Neo4jAccess:
         per_type: dict[str, tuple[int, list[NavCandidate]]] = {}
         source_labels: tuple[str, ...] = ()
         for record in records:
-            source_labels = source_labels or tuple(record["source_labels"] or ())
+            source_labels = source_labels or tuple(record["node_labels"] or ())
             per_type[record["rel_type"]] = (
                 record["total"],
                 [
                     _candidate_from_edge(
                         edge,
-                        source_element_id=node_id,
-                        source_label=source_labels[0] if source_labels else "",
+                        direction=direction if direction != "both" else "out",
                     )
                     for edge in record["kept"]
                 ],

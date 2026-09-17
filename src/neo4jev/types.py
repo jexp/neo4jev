@@ -15,6 +15,15 @@ class TerminationReason(str, Enum):
 
 @dataclass(frozen=True)
 class NavCandidate:
+    """A relationship offered to the navigator as a possible next hop.
+
+    `target_*`/`source_*` describe the relationship's two endpoints. `direction` is
+    relative to the node the candidate was fetched from: "out" means the edge leaves
+    the current node (target is the next node), "in" means it points at the current
+    node (source is the next node). `next_element_id` is whichever endpoint the
+    traversal would arrive at.
+    """
+
     edge_key: str
     rel_element_id: str
     rel_type: str
@@ -24,6 +33,21 @@ class NavCandidate:
     target_props: dict[str, Any]
     source_element_id: str = ""
     source_label: str = ""
+    direction: str = "out"
+
+    @property
+    def next_element_id(self) -> str:
+        return self.source_element_id if self.direction == "in" else self.target_element_id
+
+    @property
+    def next_label(self) -> str:
+        return self.source_label if self.direction == "in" else self.target_label
+
+    @property
+    def next_props(self) -> dict[str, Any]:
+        # For incoming edges the target_props field holds the current node's properties
+        # (fetched as the relationship's end), so the next node's props are unknown here.
+        return {} if self.direction == "in" else self.target_props
 
 
 def assign_edge_keys(candidates: Sequence[NavCandidate]) -> list[NavCandidate]:

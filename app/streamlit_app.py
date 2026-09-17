@@ -93,7 +93,11 @@ def _node_caption(node: GraphNode) -> str:
 
 
 def _candidate_caption(candidate: NavCandidate) -> str:
-    return _short_name(candidate.target_props, candidate.target_label, candidate.target_element_id)
+    label = candidate.next_label if candidate.direction == "in" else candidate.target_label
+    props = candidate.next_props if candidate.direction == "in" else candidate.target_props
+    fallback = candidate.next_element_id if candidate.direction == "in" else candidate.target_element_id
+    arrow = "←" if candidate.direction == "in" else "→"
+    return f"{arrow} {_short_name(props, label, fallback)}"
 
 
 def _index_options(mode: LookupMode, indexes: LabelIndexes) -> tuple[IndexRef, ...]:
@@ -194,13 +198,20 @@ def run_controls() -> navigator.NavigatorConfig:
         cutoff = st.slider("Probability cutoff", min_value=0.0, max_value=1.0, value=0.05, step=0.01)
         max_depth = st.number_input("Max depth", min_value=1, max_value=12, value=4)
         max_calls = st.number_input("Max TypeSafe calls", min_value=1, max_value=200, value=24)
+        direction = st.radio(
+            "Relationship direction",
+            ("out", "in", "both"),
+            horizontal=True,
+            help="out = edges leaving each node; in = edges pointing at it (e.g. Chunk ← Article); both = all incident edges.",
+        )
     return navigator.NavigatorConfig(
-        top_k=int(top_k), cutoff=float(cutoff), max_depth=int(max_depth), max_calls=int(max_calls)
+        top_k=int(top_k), cutoff=float(cutoff), max_depth=int(max_depth), max_calls=int(max_calls),
+        direction=direction,
     )
 
 
-def _fetch_candidates(node_id: str) -> list[NavCandidate]:
-    return list(get_access().get_outgoing_relationships(node_id))
+def _fetch_candidates(node_id: str, direction: str) -> list[NavCandidate]:
+    return list(get_access().get_outgoing_relationships(node_id, direction=direction))
 
 
 async def _navigate(
@@ -209,10 +220,11 @@ async def _navigate(
     goal: GoalSpec,
     config: navigator.NavigatorConfig,
 ) -> NavResult:
+    fetch = lambda node_id: _fetch_candidates(node_id, config.direction)
     async with client:
         return await navigator.navigate(
             client,
-            _fetch_candidates,
+            fetch,
             navigator.NodeContext(element_id=start.element_id, label=start.label, properties=start.props),
             goal,
             config=config,
