@@ -84,3 +84,6 @@ Note for the caller: navigator.py also carries concurrent task-014 changes (`_ke
 
 ## TASK-012 PROVENANCE — 2026-09-16T02:54:37Z
 The task-012 changeset (README.md, AGENTS.md, notebooks 02/03, the task-012 entry in the tasks YAML, and the TASK-012 entry above) landed inside commit `39d7934` ("graph-navigation-demo-task-014: deduplicate edge-keying into one shared helper"), not a task-012 commit of its own. Cause: concurrent agents stage into one shared git index, and task-014's `git commit` (no pathspec) committed everything that happened to be staged at that instant — its own files, task-015's navigator.py, and task-012's staged files. No amend/rebase/reset was performed, so the content is intact and verified (README/AGENTS round-robin prose, notebook 02 md cell 6, task-012 `completed_at: 2026-09-16T02:54:37Z`, 0 error outputs in both notebooks) but its provenance is this commit and not the message it is filed under. Worth avoiding in future fan-outs: `git commit -- <paths>` scopes the commit to named paths and leaves other agents' staged work in the index.
+
+## REVIEW — 2026-09-17T20:02:45Z
+Added 1 review task (task-016): per-label display-property identity.

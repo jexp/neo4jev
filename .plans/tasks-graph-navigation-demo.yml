@@ -1,7 +1,7 @@
 feature: graph-navigation-demo
 prd: ./prd-graph-navigation-demo.md
 created_at: 2026-09-16T00:00:00Z
-updated_at: 2026-09-16T02:47:48Z
+updated_at: 2026-09-17T20:02:45Z
 
 tasks:
   - id: task-001
@@ -381,3 +381,36 @@ tasks:
       - "uv run pytest tests/unit passes with no network"
     source: review
     completed_at: 2026-09-16T02:55:03Z
+
+  - id: task-016
+    title: "Per-label display-property identity via schema + TypeSafe, used by all captions"
+    description: |
+      The caption heuristics (_short_name in app/streamlit_app.py, _node_caption in
+      src/neo4jev/viz.py) pick the longest short string property of a node, which prefers
+      description blobs and URIs over actual names. Real failure cases on companies2:
+      "Organization · Subsidiary of Microsoft, which is developing Skype" (a description
+      property, chosen because the node has no name) and "Organization ·
+      http://diffbot.com/entity/EIsFKrN_ZNLSWsvxdQfWutQ" (a URI property). The fix must be
+      generic, not schema-specific: for each node label in the graph, derive the top 2-3
+      human-identifiable display properties up front by combining live schema introspection
+      (property keys per label via sampling, which of them are indexed via SHOW INDEXES,
+      and the value types from a small sample) with one TypeSafe call per label that judges
+      which properties best identify a node to a human reader (prefer short string name/title
+      -like properties, never URIs, never embeddings/numbers/dates/long text). Cache the
+      result per label. Then all caption sites (app lookup picker, app trace
+      _candidate_caption, viz _node_caption) consult the per-label display-property list
+      first and fall back to the current heuristic only when the derived list is empty.
+      The fallback heuristic itself must additionally skip URI-looking strings
+      (scheme:// or long path segments) and cap the description-style length.
+      Work in the library, not the app: the per-label identity map belongs to
+      neo4j_access.py (it owns the live schema) so notebooks get it for free.
+    status: pending
+    dependencies: []
+    acceptance_criteria:
+      - "neo4j_access exposes a per-label display-property resolution (schema-derived + one TypeSafe call per label, cached)"
+      - "app lookup picker, app per-hop trace, and viz captions all prefer derived display properties over the longest-string heuristic"
+      - "A node with only a URI and no name never renders the URI as its caption"
+      - "Unit tests cover the derivation with a mocked TypeSafe client and a fake schema; no network"
+      - "tests/unit passes; the live notebooks/app render real names instead of descriptions/URIs on companies2"
+    source: review
+    completed_at: null
