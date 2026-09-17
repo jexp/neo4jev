@@ -10,6 +10,7 @@ the ``Noul`` alone (an empty ``Choice`` has nothing to choose between).
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -36,6 +37,11 @@ NOUL_QUESTION = "goal_reached"
 
 # Hard API limit on a Choice question's criteria map (REQ-NF-005).
 MAX_CHOICE_OPTIONS = 255
+
+# Keep rich graph records (aliases, article text, embeddings) within a practical
+# prompt size. The original properties remain on candidates and in visualizations.
+MAX_PROMPT_PROPERTY_CHARS = 1200
+MAX_PROMPT_VALUE_CHARS = 256
 
 _LOG_FLOOR = 1e-12
 _STAGE_DELIMITER = "\x00"
@@ -118,12 +124,38 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
+def _prompt_properties(properties: Mapping[str, Any]) -> dict[str, Any]:
+    """Summarize properties without assuming a particular graph schema.
+
+    Short values are retained first so large text or vector properties cannot
+    crowd out identifiers. Long values become explicitly marked text previews.
+    """
+    values = {str(key): _jsonable(value) for key, value in properties.items()}
+    encoded = {key: json.dumps(value, ensure_ascii=False) for key, value in values.items()}
+    if len(json.dumps(values, ensure_ascii=False)) <= MAX_PROMPT_PROPERTY_CHARS:
+        return values
+
+    marker = "__prompt_truncated__"
+    while marker in values:
+        marker += "_"
+    summary: dict[str, Any] = {marker: True}
+    for key in sorted(values, key=lambda key: len(encoded[key])):
+        value = values[key]
+        if len(encoded[key]) > MAX_PROMPT_VALUE_CHARS:
+            preview = value if isinstance(value, str) else encoded[key]
+            value = preview[:MAX_PROMPT_VALUE_CHARS] + "… [truncated]"
+        proposed = {**summary, key: value}
+        if len(json.dumps(proposed, ensure_ascii=False)) <= MAX_PROMPT_PROPERTY_CHARS:
+            summary[key] = value
+    return summary
+
+
 def _candidate_criteria(candidate: NavCandidate) -> dict[str, Any]:
     return {
         "relationship_type": candidate.rel_type,
-        "relationship_properties": _jsonable(candidate.rel_props),
+        "relationship_properties": _prompt_properties(candidate.rel_props),
         "target_label": candidate.target_label,
-        "target_properties": _jsonable(candidate.target_props),
+        "target_properties": _prompt_properties(candidate.target_props),
     }
 
 
@@ -205,7 +237,7 @@ def _node_state(
         "current_node": {
             "element_id": node.element_id,
             "label": node.label,
-            "properties": _jsonable(node.properties),
+            "properties": _prompt_properties(node.properties),
         },
         "path_so_far": [
             {
