@@ -397,9 +397,15 @@ tasks:
       and the value types from a small sample) with one TypeSafe call per label that judges
       which properties best identify a node to a human reader (prefer short string name/title
       -like properties, never URIs, never embeddings/numbers/dates/long text). Cache the
-      result per label. Then all caption sites (app lookup picker, app trace
-      _candidate_caption, viz _node_caption) consult the per-label display-property list
-      first and fall back to the current heuristic only when the derived list is empty.
+      result per label. The derived identity properties must drive BOTH display AND the
+      decision payload sent to the TypeSafe API: (a) all caption sites (app lookup picker,
+      app trace _candidate_caption, viz _node_caption) consult the per-label display-
+      property list first, AND (b) the Choice criteria and Noul state
+      (navigator._candidate_criteria's target_properties and the current-node state)
+      present the identity properties first/prominently rather than burying the name under
+      a long description or a URI — the model decides on what it can identify, so what it
+      sees must be the human-identifiable attributes. Fall back to the current heuristic
+      only when the derived list is empty.
       The fallback heuristic itself must additionally skip URI-looking strings
       (scheme:// or long path segments) and cap the description-style length.
       Work in the library, not the app: the per-label identity map belongs to
