@@ -19,6 +19,7 @@ from neo4jev.navigator import (
     navigate,
     one_hop,
 )
+from neo4jev.neo4j_access import clear_display_properties, remember_display_properties
 from neo4jev.types import (
     FreeTextGoal,
     NavCandidate,
@@ -26,6 +27,13 @@ from neo4jev.types import (
     TargetNodeGoal,
     TerminationReason,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_identity_map():
+    clear_display_properties()
+    yield
+    clear_display_properties()
 
 
 def candidate(rel_id: str, target_id: str, *, rel_type: str = "REL", label: str = "Thing",
@@ -112,6 +120,52 @@ def test_one_hop_options_are_opaque_ids_mapped_back_to_candidates():
     assert [c.target_element_id for c in hop.candidates] == ["n-a", "n-b", "n-c"]
     assert [c.target_element_id for c, _ in hop.chosen] == ["n-b"]
     assert hop.noul == 0.0
+
+
+def test_choice_criteria_lead_with_the_labels_display_properties():
+    remember_display_properties("Thing", ("name",), database="db")
+    candidates = [
+        candidate(
+            "r0",
+            "n-a",
+            target_props={"description": "d" * 300, "name": "Bob", "id": "n-a"},
+        )
+    ]
+    client = FakeClient()
+
+    run(one_hop(client, NodeContext(element_id="n0"), candidates, FreeTextGoal(goal="find Bob")))
+
+    properties = client.calls[0].questions[CHOICE_QUESTION].criteria["e0"]["target_properties"]
+    assert list(properties) == ["name", "description", "id"]
+
+
+def test_current_node_state_leads_with_the_labels_display_properties():
+    remember_display_properties("Company", ("name",), database="db")
+    client = FakeClient()
+
+    run(
+        one_hop(
+            client,
+            NodeContext(
+                element_id="n0", label="Company", properties={"description": "prose", "name": "Apple"}
+            ),
+            [candidate("r0", "n-a")],
+            FreeTextGoal(goal="find a supplier"),
+        )
+    )
+
+    properties = client.calls[0].state["current_node"]["properties"]
+    assert list(properties) == ["name", "description"]
+
+
+def test_criteria_keep_property_order_when_nothing_is_derived_for_the_label():
+    candidates = [candidate("r0", "n-a", target_props={"description": "prose", "name": "Bob"})]
+    client = FakeClient()
+
+    run(one_hop(client, NodeContext(element_id="n0"), candidates, FreeTextGoal(goal="x")))
+
+    properties = client.calls[0].questions[CHOICE_QUESTION].criteria["e0"]["target_properties"]
+    assert list(properties) == ["description", "name"]
 
 
 def test_one_hop_marks_incoming_candidates_with_direction():

@@ -4,6 +4,11 @@ Everything that touches the target graph lives here: driver lifecycle, label and
 index introspection, start-node lookup (exact / fulltext / vector) and the
 neighbourhood fetches the navigator and the visualisation need.
 
+This module also owns the per-label *identity map* (see :func:`resolve_display_value` and
+:meth:`Neo4jAccess.display_properties`): which properties actually identify a node to a
+human reader, derived from the live schema plus one TypeSafe call per label. Presentation
+surfaces (viz, the app, notebooks) consult it instead of guessing from property values.
+
 Nothing schema-specific is hardcoded: labels, relationship types and property
 names are read from the live database (``SHOW INDEXES``, ``labels()``,
 ``type()``, ``keys()``).
@@ -13,18 +18,24 @@ from __future__ import annotations
 
 import hashlib
 import random
-from collections.abc import Callable, Iterator, Mapping, Sequence
+import re
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import neo4j
+from typesafe_sdk import Choice, SystemOneResponse, TypeSafeClient, TypeSafeError
 
 from neo4jev.config import Settings
 from neo4jev.types import NavCandidate, assign_edge_keys
 
 LookupMode = Literal["exact", "fulltext", "vector"]
 LOOKUP_MODES: tuple[LookupMode, ...] = ("exact", "fulltext", "vector")
+
+# DriverError is a sibling of Neo4jError, not a parent: ServiceUnavailable (server unreachable)
+# and ConfigurationError (bad URI) only descend from DriverError.
+NEO4J_ERRORS = (neo4j.exceptions.Neo4jError, neo4j.exceptions.DriverError)
 
 DEFAULT_SEARCH_LIMIT = 10
 DEFAULT_REL_TYPE_CAP = 10
@@ -33,6 +44,22 @@ DEFAULT_NEIGHBORHOOD_LIMIT = 200
 
 # Embedder contract: (text, expected_dimensions) -> vector of that length.
 Embedder = Callable[[str, int], Sequence[float]]
+
+# Identity / caption rules. A display property must be a short human-readable string; a
+# caption used as a last resort must additionally be short enough that a description blob
+# cannot win it (prose is longer than a name).
+MAX_IDENTITY_VALUE_LEN = 120
+MAX_FALLBACK_CAPTION_LEN = 48
+MAX_IDENTITY_PROPERTIES = 3
+IDENTITY_SAMPLE_SIZE = 25
+IDENTITY_SAMPLES_PER_PROPERTY = 3
+IDENTITY_QUESTION = "display_property"
+
+_URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
+# Lowercase only, deliberately: "yandex.com" is a host, but "E.ON", "Salesforce.com" and
+# "St.Louis" are company/place names that happen to carry a dot.
+_DOMAIN_LIKE_RE = re.compile(r"^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/:?#].*)?$")
+_OPAQUE_ID_RE = re.compile(r"^[0-9a-fA-F]{16,}$|^(?:[0-9a-fA-F]+-){3,}[0-9a-fA-F]+$")
 
 _LUCENE_SPECIAL = set('+-&|!(){}[]^"~*?\\:/')
 
@@ -200,6 +227,225 @@ def default_embedder(text: str, dimensions: int) -> list[float]:
     return [value / norm for value in vector]
 
 
+def looks_like_reference(value: str) -> bool:
+    """True for URIs, paths and opaque ids: they identify a node, but never a human.
+
+    Covers ``scheme://…``, ``www.…``, bare host/path forms (``crunchbase.com/organization/x``,
+    ``yandex.com``), long path-only segments and element-id/hash shapes — the property values
+    that used to win the "longest string" caption heuristic. Dotted names such as ``E.ON`` or
+    ``Salesforce.com`` are not references: a host is written in lowercase.
+    """
+    text = value.strip()
+    if not text or any(char.isspace() for char in text):
+        return False
+    if _URI_SCHEME_RE.match(text) or text.lower().startswith("www."):
+        return True
+    if _DOMAIN_LIKE_RE.match(text):
+        return True
+    if text.count(":") >= 2:  # Neo4j element ids ("4:<uuid>:123") and other composite ids
+        return True
+    if _OPAQUE_ID_RE.match(text):
+        return True
+    return text.count("/") >= 2
+
+
+def _short_identity_value(value: Any, max_len: int) -> str | None:
+    """``value`` as a caption candidate, or None when it cannot identify anything."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > max_len or looks_like_reference(text):
+        return None
+    return text
+
+
+def fallback_display_value(
+    props: Mapping[str, Any], *, max_len: int = MAX_FALLBACK_CAPTION_LEN
+) -> str | None:
+    """The longest short, non-reference string property, or None when there is none.
+
+    Used only when the node carries none of its label's derived display properties; the
+    length cap is what keeps a description blob or an article body out of a caption.
+    """
+    candidates = [
+        text
+        for raw in props.values()
+        if (text := _short_identity_value(raw, max_len)) is not None
+    ]
+    return max(candidates, key=len) if candidates else None
+
+
+_DISPLAY_PROPERTIES: dict[tuple[str, str], tuple[str, ...]] = {}
+
+
+def remember_display_properties(
+    label: str, properties: Sequence[str], *, database: str = ""
+) -> None:
+    """Record the derived display properties for ``label`` (keyed by database + label)."""
+    _DISPLAY_PROPERTIES[(database, label)] = tuple(properties)
+
+
+def display_properties_for(label: str, *, database: str | None = None) -> tuple[str, ...]:
+    """Derived display properties for ``label``, or ``()`` when nothing was derived yet.
+
+    Read-only by design: presentation code (viz, the app) knows a node's label but not the
+    database it came from and must not trigger a query or an API call itself. Derivation is
+    driven by :meth:`Neo4jAccess.display_properties`.
+    """
+    if database is not None:
+        return _DISPLAY_PROPERTIES.get((database, label), ())
+    matches = {
+        properties for (_, cached_label), properties in _DISPLAY_PROPERTIES.items()
+        if cached_label == label
+    }
+    # Two databases disagreeing about one label cannot be resolved from a label alone: a wrong
+    # guess would caption a node with another schema's property names, so answer with nothing.
+    return matches.pop() if len(matches) == 1 else ()
+
+
+def clear_display_properties() -> None:
+    """Forget every derived display property (tests, and reconnecting to another database)."""
+    _DISPLAY_PROPERTIES.clear()
+
+
+def resolve_display_value(props: Mapping[str, Any], label: str) -> str | None:
+    """The value a human should read for a node, or None when it has no readable identity.
+
+    A property derived as a display property for ``label`` wins, in the derived order; the
+    result becomes a URI/too-long value only if the derived list is empty, and then only
+    through the short, non-reference fallback.
+    """
+    for key in display_properties_for(label):
+        value = _short_identity_value(props.get(key), MAX_IDENTITY_VALUE_LEN)
+        if value is not None:
+            return value
+    return fallback_display_value(props)
+
+
+@dataclass(frozen=True)
+class LabelSchema:
+    """Sampled schema of one label: the raw material the identity map is derived from."""
+
+    label: str
+    property_keys: tuple[str, ...] = ()
+    property_types: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    sample_values: dict[str, tuple[Any, ...]] = field(default_factory=dict)
+    indexed_properties: tuple[str, ...] = ()
+    sampled_nodes: int = 0
+
+    @property
+    def string_properties(self) -> tuple[str, ...]:
+        return tuple(
+            key for key in self.property_keys if self.property_types.get(key) == ("str",)
+        )
+
+
+def _samples_are_identity_like(values: Sequence[Any]) -> bool:
+    # Majority, not all: one host-shaped or odd sample ("Yandex", "google.com") must not drop a
+    # property that identifies most nodes of the label.
+    if not values:
+        return False
+    readable = sum(
+        1 for value in values if _short_identity_value(value, MAX_IDENTITY_VALUE_LEN) is not None
+    )
+    return readable * 2 >= len(values)
+
+
+def _name_shaped(values: Sequence[Any]) -> bool:
+    """A value shaped like a name rather than a code: one to four words."""
+    for value in values:
+        text = _short_identity_value(value, MAX_IDENTITY_VALUE_LEN)
+        if text is not None and 1 <= len(text.split()) <= 4:
+            return True
+    return False
+
+
+def identity_candidates(schema: LabelSchema) -> tuple[str, ...]:
+    """Property keys that could plausibly identify a node to a human.
+
+    String-only, and every sampled value short and non-reference — so URIs, embeddings,
+    numbers, dates and long prose are gone before the model is even asked.
+    """
+    return tuple(
+        key
+        for key in schema.string_properties
+        if _samples_are_identity_like(schema.sample_values.get(key, ()))
+    )
+
+
+def local_identity_order(schema: LabelSchema) -> tuple[str, ...]:
+    """Deterministic ranking of :func:`identity_candidates`: indexed, name-shaped, alphabetical.
+
+    This is both the option order offered to the model and the fallback used when the TypeSafe
+    call is unavailable or fails.
+    """
+    indexed = set(schema.indexed_properties)
+    return tuple(
+        sorted(
+            identity_candidates(schema),
+            key=lambda key: (
+                0 if key in indexed else 1,
+                0 if _name_shaped(schema.sample_values.get(key, ())) else 1,
+                key,
+            ),
+        )
+    )
+
+
+class IdentityClient(Protocol):
+    """The sync TypeSafe surface the identity derivation needs (one call per label)."""
+
+    def system_one(
+        self, state: Any, questions: Mapping[str, Any], **kwargs: Any
+    ) -> SystemOneResponse: ...
+
+
+def _identity_state(schema: LabelSchema, candidates: Sequence[str]) -> dict[str, Any]:
+    return {
+        "label": schema.label,
+        "sampled_nodes": schema.sampled_nodes,
+        "candidate_properties": list(candidates),
+    }
+
+
+def _identity_choice(schema: LabelSchema, candidates: Sequence[str]) -> Choice:
+    # Option keys are the property names themselves: unlike relationship types, property keys
+    # on one label are unique, so nothing can collapse into a single option.
+    return Choice(
+        instructions=(
+            f"Below are the candidate properties of the node label '{schema.label}'. Select every "
+            "property that helps a human reader identify a single node of this label, most "
+            "identifying first. Prefer short human-readable name/title-like string properties. "
+            "Never select URLs or URIs, path-like references, image or document links, embeddings, "
+            "numbers, dates, booleans, or long free text."
+        ),
+        criteria={
+            key: {
+                "sample_values": [
+                    str(value)[:MAX_IDENTITY_VALUE_LEN]
+                    for value in schema.sample_values.get(key, ())
+                ],
+                "indexed": key in schema.indexed_properties,
+            }
+            for key in candidates
+        },
+    )
+
+
+def _default_identity_client() -> IdentityClient | None:
+    """A sync TypeSafe client when a key is configured, else None (local ranking only)."""
+    try:
+        api_key = Settings.from_env(require_typesafe_key=False).typesafe_api_key.strip()
+    except ValueError:
+        return None
+    if not api_key:
+        return None
+    try:
+        return TypeSafeClient(api_key=api_key)
+    except TypeSafeError:
+        return None
+
+
 def _quote_label(label: str) -> str:
     if not label:
         raise ValueError("label must be a non-empty string")
@@ -331,6 +577,135 @@ class Neo4jAccess:
             fulltext=tuple(sorted(fulltext, key=lambda ref: ref.name)),
             vector=tuple(sorted(vector, key=lambda ref: ref.name)),
         )
+
+    def describe_label(self, label: str, *, sample: int = IDENTITY_SAMPLE_SIZE) -> LabelSchema:
+        """Sampled schema of one label: property keys, value types, samples, indexed properties.
+
+        Sampling (rather than a full scan) keeps this cheap on the 500k-node labels while still
+        showing which properties are strings, which are vectors/numbers/dates, and what the
+        values actually look like.
+        """
+        records = self._run(
+            f"""
+            MATCH (n:{_quote_label(label)})
+            WITH n LIMIT $sample
+            RETURN collect(properties(n)) AS property_maps, count(n) AS sampled
+            """,
+            sample=sample,
+        )
+        property_maps = list(records[0]["property_maps"] or []) if records else []
+        sampled = int(records[0]["sampled"] or 0) if records else 0
+
+        types: dict[str, set[str]] = {}
+        samples: dict[str, list[Any]] = {}
+        for properties in property_maps:
+            for key, value in properties.items():
+                key = str(key)
+                types.setdefault(key, set()).add(type(value).__name__)
+                bucket = samples.setdefault(key, [])
+                if len(bucket) < IDENTITY_SAMPLES_PER_PROPERTY:
+                    bucket.append(value)
+
+        indexes = self.detect_indexes(label)
+        indexed = tuple(
+            sorted(
+                {
+                    property_name
+                    for index in (*indexes.fulltext, *indexes.vector)
+                    for property_name in index.properties
+                }
+            )
+        )
+        return LabelSchema(
+            label=label,
+            property_keys=tuple(sorted(types)),
+            property_types={key: tuple(sorted(names)) for key, names in types.items()},
+            sample_values={key: tuple(values) for key, values in samples.items()},
+            indexed_properties=indexed,
+            sampled_nodes=sampled,
+        )
+
+    def display_properties(
+        self, label: str, *, client: IdentityClient | None = None
+    ) -> tuple[str, ...]:
+        """The properties that identify a node of ``label`` to a human reader (cached).
+
+        Derived once per label: live schema introspection narrows the string properties, then a
+        single TypeSafe call ranks them. Without a key (or when the call fails) the deterministic
+        local ranking is used, so captions degrade but never break.
+        """
+        cached = _DISPLAY_PROPERTIES.get((self._database, label))
+        if cached is not None:
+            return cached
+        schema = self.describe_label(label)
+        candidates = local_identity_order(schema)
+        derived = (
+            self._select_display_properties(schema, candidates, client) if candidates else ()
+        )
+        remember_display_properties(label, derived, database=self._database)
+        return derived
+
+    def derive_display_properties(
+        self, labels: Iterable[str], *, client: IdentityClient | None = None
+    ) -> dict[str, tuple[str, ...]]:
+        """Resolve display properties for several labels with one shared client."""
+        resolved = client or _default_identity_client()
+        return {
+            label: self.display_properties(label, client=resolved) for label in labels
+        }
+
+    def derive_candidate_labels(
+        self, candidates: Iterable[NavCandidate], *, client: IdentityClient | None = None
+    ) -> None:
+        """Derive the display properties of every label a hop is about to offer the model.
+
+        A fetcher calls this on the candidates it just fetched, so the ``Choice`` criteria and
+        the node state that follow already know each target's identity properties. Identity is
+        presentation data: a graph error ends the derivation instead of failing the navigation
+        that asked for it, and an already-derived label (empty result included) costs nothing.
+        """
+        labels = sorted({candidate.next_label for candidate in candidates} - {""})
+        if not labels:
+            return
+        resolved = client or _default_identity_client()
+        for label in labels:
+            try:
+                self.display_properties(label, client=resolved)
+            except NEO4J_ERRORS:
+                return
+
+    def _select_display_properties(
+        self,
+        schema: LabelSchema,
+        candidates: Sequence[str],
+        client: IdentityClient | None,
+    ) -> tuple[str, ...]:
+        # `candidates` arrives in local_identity_order: the best local guess is also the first
+        # option the model sees, and the stand-in when the call is unavailable or fails.
+        ranked = tuple(candidates[:MAX_IDENTITY_PROPERTIES])
+        client = client or _default_identity_client()
+        if client is None:
+            return ranked
+        try:
+            response = client.system_one(
+                _identity_state(schema, candidates), {IDENTITY_QUESTION: _identity_choice(schema, candidates)}
+            )
+        except TypeSafeError:
+            # A caption must never be the reason a page fails; the local ranking stands in.
+            return ranked
+        answer = response.choices.get(IDENTITY_QUESTION)
+        if answer is None:
+            return ranked
+        candidate_set = set(candidates)
+        ranked_options = sorted(
+            answer.probabilities.items(), key=lambda item: item[1], reverse=True
+        )
+        picked = tuple(
+            option
+            for option, probability in ranked_options
+            if probability > 0 and option in candidate_set
+        )
+        return picked[:MAX_IDENTITY_PROPERTIES] or ranked
 
     def get_node(self, element_id: str) -> GraphNode | None:
         records = self._run(

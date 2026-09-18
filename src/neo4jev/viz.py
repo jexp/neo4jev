@@ -13,6 +13,7 @@ from typing import Any, Literal
 from IPython.display import HTML
 from neo4j_viz import GraphWidget, Layout, Node, Relationship, VisualizationGraph
 
+from .neo4j_access import resolve_display_value
 from .types import NavCandidate, NavPath, NavResult
 
 __all__ = ["build_visualization", "render_for_notebook", "render_for_streamlit"]
@@ -36,7 +37,6 @@ NEIGHBORHOOD_NODE_SIZE = 12.0
 PATH_REL_WIDTH = 3.0
 NEIGHBORHOOD_REL_WIDTH = 1.0
 
-_MAX_CAPTION_LEN = 64
 Theme = Literal["auto", "light", "dark"]
 
 
@@ -77,15 +77,9 @@ def _role_label(role: str) -> str:
 
 
 def _node_caption(label: str, props: dict[str, Any]) -> str:
-    """Prefer the longest short string property (usually a name/title) over the raw label."""
-    strings = [
-        value
-        for key, value in props.items()
-        if key != ROLE_KEY and isinstance(value, str) and 0 < len(value) <= _MAX_CAPTION_LEN
-    ]
-    if strings:
-        return max(strings, key=len)
-    return label
+    """The node's derived display property, else the label — never a URI or a description blob."""
+    visible = {key: value for key, value in props.items() if key != ROLE_KEY}
+    return resolve_display_value(visible, label) or label
 
 
 def _node_size(role: str) -> float:

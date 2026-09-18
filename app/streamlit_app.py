@@ -19,11 +19,15 @@ from typesafe_sdk import AsyncTypeSafeClient, TypeSafeError
 from neo4jev import navigator, viz
 from neo4jev.config import Settings
 from neo4jev.neo4j_access import (
+    NEO4J_ERRORS,
     GraphNode,
     IndexRef,
     LabelIndexes,
     LookupMode,
     Neo4jAccess,
+    clear_display_properties,
+    display_properties_for,
+    resolve_display_value,
 )
 from neo4jev.types import (
     FreeTextGoal,
@@ -41,11 +45,6 @@ PATH_INTENT = "Path intent"
 GOAL_MODES = (FREE_TEXT, TARGET_NODE, PATH_INTENT)
 
 GRAPH_WIDGET_KEY = "nav_graph"
-MAX_CAPTION_LEN = 80
-
-# DriverError is a sibling of Neo4jError, not a parent: ServiceUnavailable (server
-# unreachable) and ConfigurationError (bad URI) only descend from DriverError.
-NEO4J_ERRORS = (neo4j.exceptions.Neo4jError, neo4j.exceptions.DriverError)
 
 st.set_page_config(page_title="TypeSafe graph navigation", layout="wide")
 
@@ -78,13 +77,18 @@ def detect_indexes_cached(label: str) -> LabelIndexes:
     return get_access().detect_indexes(label)
 
 
+def _derive_display_properties(label: str) -> None:
+    """Derive (once per label; the library caches the result) how this label identifies a node."""
+    try:
+        get_access().display_properties(label)
+    except (*NEO4J_ERRORS, ValueError):
+        return  # a caption must never take the page down; the value heuristic stands in
+
+
 def _short_name(props: dict[str, Any], label: str, fallback: str) -> str:
-    strings = [
-        value
-        for value in props.values()
-        if isinstance(value, str) and 0 < len(value) <= MAX_CAPTION_LEN
-    ]
-    name = max(strings, key=len) if strings else fallback
+    if label and not display_properties_for(label):
+        _derive_display_properties(label)
+    name = resolve_display_value(props, label) or fallback
     return f"{label} · {name}" if label else name
 
 
@@ -211,7 +215,12 @@ def run_controls() -> navigator.NavigatorConfig:
 
 
 def _fetch_candidates(node_id: str, direction: str) -> list[NavCandidate]:
-    return list(get_access().get_outgoing_relationships(node_id, direction=direction))
+    access = get_access()
+    candidates = list(access.get_outgoing_relationships(node_id, direction=direction))
+    # Derive the identity of every label this hop is about to offer, before the navigator builds
+    # its Choice criteria from them, so the decisions are made on names rather than URIs.
+    access.derive_candidate_labels(candidates)
+    return candidates
 
 
 async def _navigate(
@@ -372,6 +381,7 @@ def main() -> None:
             get_access.clear()
             list_labels_cached.clear()
             detect_indexes_cached.clear()
+            clear_display_properties()
             st.session_state.pop("nav_result", None)
             st.rerun()
     config = run_controls()

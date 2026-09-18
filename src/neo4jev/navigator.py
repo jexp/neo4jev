@@ -18,6 +18,7 @@ from typing import Any, Protocol
 from typesafe_sdk import Choice, Noul, SystemOneResponse
 from typesafe_sdk import Question as TypeSafeQuestion
 
+from neo4jev.neo4j_access import display_properties_for
 from neo4jev.types import (
     BeamState,
     FreeTextGoal,
@@ -153,12 +154,29 @@ def _prompt_props(props: Mapping[str, Any] | None) -> dict[str, Any]:
     return reduced
 
 
+def _identity_first(props: Mapping[str, Any] | None, label: str) -> dict[str, Any]:
+    """Reduced properties with the label's display properties moved to the front.
+
+    The model decides on what it can identify: a name that arrives after a description blob or
+    a URI reads as if those were the node's identity. Order matters in the serialized request,
+    so the derived display properties lead.
+    """
+    reduced = _prompt_props(props)
+    display = display_properties_for(label) if label else ()
+    if not display:
+        return reduced
+    front = {key: reduced[key] for key in display if key in reduced}
+    if not front:
+        return reduced
+    return {**front, **{key: value for key, value in reduced.items() if key not in front}}
+
+
 def _candidate_criteria(candidate: NavCandidate) -> dict[str, Any]:
     criteria = {
         "relationship_type": candidate.rel_type,
         "relationship_properties": _prompt_props(candidate.rel_props),
         "target_label": candidate.target_label,
-        "target_properties": _prompt_props(candidate.target_props),
+        "target_properties": _identity_first(candidate.target_props, candidate.target_label),
     }
     if candidate.direction == "in":
         # The edge points at the current node: following it moves to the source side,
@@ -289,7 +307,7 @@ def _node_state(
         "current_node": {
             "element_id": node.element_id,
             "label": node.label,
-            "properties": _prompt_props(node.properties),
+            "properties": _identity_first(node.properties, node.label),
         },
         "path_so_far": [
             {
@@ -587,7 +605,8 @@ async def navigate(
 
         batch = expandable[: budget.remaining]
         # Branches are independent round-trips, so a hop's frontier expands concurrently. Only the
-        # system_one calls overlap: candidate fetching stays synchronous (a Neo4j driver hop).
+        # system_one calls overlap: candidate fetching stays synchronous, and an injected fetcher
+        # may do blocking work of its own (a Neo4j hop, per-label identity derivation).
         expansions = await asyncio.gather(
             *(
                 _expand(

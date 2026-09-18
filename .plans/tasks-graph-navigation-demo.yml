@@ -410,7 +410,7 @@ tasks:
       (scheme:// or long path segments) and cap the description-style length.
       Work in the library, not the app: the per-label identity map belongs to
       neo4j_access.py (it owns the live schema) so notebooks get it for free.
-    status: pending
+    status: completed
     dependencies: []
     acceptance_criteria:
       - "neo4j_access exposes a per-label display-property resolution (schema-derived + one TypeSafe call per label, cached)"
@@ -419,4 +419,4 @@ tasks:
       - "Unit tests cover the derivation with a mocked TypeSafe client and a fake schema; no network"
       - "tests/unit passes; the live notebooks/app render real names instead of descriptions/URIs on companies2"
     source: review
-    completed_at: null
+    completed_at: 2026-09-17T20:52:09Z

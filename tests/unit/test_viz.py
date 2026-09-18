@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import pytest
 from IPython.display import HTML
 from neo4j_viz import GraphWidget, Node, Relationship
 
+from neo4jev.neo4j_access import clear_display_properties, remember_display_properties
 from neo4jev.types import NavCandidate, NavPath, NavResult, NavStep, TerminationReason
 from neo4jev.viz import (
     NEIGHBORHOOD_COLOR,
@@ -13,6 +15,18 @@ from neo4jev.viz import (
     render_for_notebook,
     render_for_streamlit,
 )
+
+URI = "http://diffbot.com/entity/EIsFKrN_ZNLSWsvxdQfWutQ"
+# Real prose: longer than any caption cap, so it can never be a fallback caption.
+PROSE = "Subsidiary of Microsoft, which is developing Skype and other services worldwide"
+OPAQUE_ID = "4:14b688aa-3906-4af7-9f45-70b8a1c2d3e4:6431"
+
+
+@pytest.fixture(autouse=True)
+def _clean_identity_map():
+    clear_display_properties()
+    yield
+    clear_display_properties()
 
 
 def _candidate(
@@ -185,6 +199,47 @@ def test_start_node_uses_its_label_and_props_when_the_result_carries_them():
     assert start.properties["label"] == "Organization"
     assert start.properties["name"] == "Apple"
     assert start.color is not None
+
+
+def _start_only_result(label: str, props: dict) -> NavResult:
+    return NavResult(
+        start_element_id="n0", start_label=label, start_props=props, paths=[], neighborhood=[]
+    )
+
+
+def test_caption_prefers_the_labels_derived_display_property_over_a_description():
+    remember_display_properties("Organization", ("fullName", "name"), database="db")
+
+    graph = build_visualization(
+        _start_only_result(
+            "Organization",
+            {"name": "Apple", "fullName": "Apple Inc.", "uri": URI, "description": PROSE},
+        )
+    )
+
+    assert _node(graph, "n0").caption == "Apple Inc."
+
+
+def test_caption_falls_back_to_the_label_never_to_a_uri_or_a_description():
+    # The node carries none of the derived display properties, only references and prose.
+    remember_display_properties("Organization", ("fullName", "name"), database="db")
+
+    graph = build_visualization(
+        _start_only_result(
+            "Organization",
+            {"uri": URI, "homepageUri": "yandex.com", "id": OPAQUE_ID, "description": PROSE},
+        )
+    )
+
+    assert _node(graph, "n0").caption == "Organization"
+
+
+def test_caption_rejects_a_uri_without_any_derived_identity():
+    graph = build_visualization(
+        _start_only_result("Chunk", {"id": URI, "embedding": [0.1, 0.2]})
+    )
+
+    assert _node(graph, "n0").caption == "Chunk"
 
 
 def test_node_seen_first_as_a_source_still_picks_up_properties_seen_later():
