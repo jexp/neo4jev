@@ -63,6 +63,30 @@ def assign_edge_keys(candidates: Sequence[NavCandidate]) -> list[NavCandidate]:
 
 
 @dataclass(frozen=True)
+class GraphSchema:
+    """Live graph topology shared with the model as navigation context.
+
+    ``relationships`` holds ``(source_label, rel_type, target_label)`` triples as read
+    from ``CALL db.schema.visualization()``; labels/rel types are the sorted distinct
+    endpoints/types. Nothing here is hardcoded — everything is discovered live.
+    """
+
+    labels: tuple[str, ...]
+    relationship_types: tuple[str, ...]
+    relationships: tuple[tuple[str, str, str], ...]
+
+    def as_prompt(self) -> dict[str, Any]:
+        return {
+            "labels": list(self.labels),
+            "relationship_types": list(self.relationship_types),
+            "topology": [
+                {"from": source, "relationship": rel_type, "to": target}
+                for source, rel_type, target in self.relationships
+            ],
+        }
+
+
+@dataclass(frozen=True)
 class NavStep:
     node_id: str
     chosen: list[NavCandidate]

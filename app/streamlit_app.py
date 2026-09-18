@@ -77,6 +77,15 @@ def detect_indexes_cached(label: str) -> LabelIndexes:
     return get_access().detect_indexes(label)
 
 
+@st.cache_data(show_spinner=False)
+def graph_schema_cached():
+    """Live topology (labels + relationship triples) shared with Jev in every hop's state."""
+    try:
+        return get_access().graph_schema()
+    except (*NEO4J_ERRORS, ValueError):
+        return None  # best-effort: navigation works without schema context
+
+
 def _derive_display_properties(label: str) -> None:
     """Derive (once per label; the library caches the result) how this label identifies a node."""
     try:
@@ -211,6 +220,7 @@ def run_controls() -> navigator.NavigatorConfig:
     return navigator.NavigatorConfig(
         top_k=int(top_k), cutoff=float(cutoff), max_depth=int(max_depth), max_calls=int(max_calls),
         direction=direction,
+        schema=graph_schema_cached(),
     )
 
 
@@ -381,6 +391,7 @@ def main() -> None:
             get_access.clear()
             list_labels_cached.clear()
             detect_indexes_cached.clear()
+            graph_schema_cached.clear()
             clear_display_properties()
             st.session_state.pop("nav_result", None)
             st.rerun()

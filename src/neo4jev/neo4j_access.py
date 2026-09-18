@@ -28,7 +28,7 @@ import neo4j
 from typesafe_sdk import Choice, SystemOneResponse, TypeSafeClient, TypeSafeError
 
 from neo4jev.config import Settings
-from neo4jev.types import NavCandidate, assign_edge_keys
+from neo4jev.types import GraphSchema, NavCandidate, assign_edge_keys
 
 LookupMode = Literal["exact", "fulltext", "vector"]
 LOOKUP_MODES: tuple[LookupMode, ...] = ("exact", "fulltext", "vector")
@@ -551,6 +551,41 @@ class Neo4jAccess:
     def list_labels(self) -> tuple[str, ...]:
         records = self._run("CALL db.labels() YIELD label RETURN label")
         return tuple(sorted(record["label"] for record in records))
+
+    def graph_schema(self) -> GraphSchema:
+        """Live topology: labels, relationship types, and (from, type, to) triples.
+
+        ``db.schema.visualization()`` is derived from live data, so nothing is hardcoded;
+        a deployment without the procedure falls back to labels + types only.
+        """
+        labels = self.list_labels()
+        type_records = self._run(
+            "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType"
+        )
+        rel_types = tuple(sorted(record["relationshipType"] for record in type_records))
+        try:
+            viz = self._run(
+                "CALL db.schema.visualization() YIELD nodes, relationships "
+                "RETURN nodes, relationships"
+            )
+        except NEO4J_ERRORS:
+            return GraphSchema(labels=labels, relationship_types=rel_types, relationships=())
+        node_labels = {
+            record_id: next(iter(labels_of), "")
+            for row in viz
+            for node in row["nodes"]
+            for record_id, labels_of in [(node.element_id, node.labels)]
+        }
+        triples = {
+            (node_labels.get(rel.start_node.element_id, ""), rel.type, node_labels.get(rel.end_node.element_id, ""))
+            for row in viz
+            for rel in row["relationships"]
+        }
+        return GraphSchema(
+            labels=labels,
+            relationship_types=rel_types,
+            relationships=tuple(sorted(t for t in triples if all(t))),
+        )
 
     def detect_indexes(self, label: str) -> LabelIndexes:
         records = self._run(

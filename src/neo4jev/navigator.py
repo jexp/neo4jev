@@ -23,6 +23,7 @@ from neo4jev.types import (
     BeamState,
     FreeTextGoal,
     GoalSpec,
+    GraphSchema,
     NavCandidate,
     NavPath,
     NavResult,
@@ -58,6 +59,9 @@ class NavigatorConfig:
     goal_threshold: float = 0.5
     model: str | None = None
     direction: str = "out"
+    # Live graph topology (labels + relationship triples) included in every state payload,
+    # so the model knows what the rest of the graph can offer beyond this hop's candidates.
+    schema: GraphSchema | None = None
 
     def __post_init__(self) -> None:
         for name in ("max_depth", "max_calls", "top_k", "beam_width"):
@@ -302,6 +306,7 @@ def _node_state(
     *,
     hop_index: int,
     path: Sequence[NavStep],
+    schema: GraphSchema | None = None,
 ) -> dict[str, Any]:
     state: dict[str, Any] = {
         "current_node": {
@@ -325,6 +330,8 @@ def _node_state(
             "description": view.description,
         },
     }
+    if schema is not None:
+        state["graph_schema"] = schema.as_prompt()
     if view.stages is not None and view.stage_index is not None:
         state["goal"]["stages"] = list(view.stages)
         state["goal"]["current_stage_index"] = view.stage_index
@@ -410,7 +417,7 @@ async def _execute_hop(
             criteria={candidate.edge_key: _candidate_criteria(candidate) for candidate in keyed},
             instructions=view.choice_instructions(),
         )
-    state = _node_state(node, view, hop_index=hop_index, path=path)
+    state = _node_state(node, view, hop_index=hop_index, path=path, schema=settings.schema)
     response = await client.system_one(state, questions, model=model or settings.model)
 
     choice_answer = response.choices.get(CHOICE_QUESTION)

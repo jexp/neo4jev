@@ -139,6 +139,39 @@ def test_choice_criteria_lead_with_the_labels_display_properties():
     assert list(properties) == ["name", "description", "id"]
 
 
+def test_graph_schema_is_included_in_the_state_when_configured():
+    from neo4jev.types import GraphSchema
+
+    schema = GraphSchema(
+        labels=("Organization", "Patent"),
+        relationship_types=("APPLIED_FOR",),
+        relationships=(("Organization", "APPLIED_FOR", "Patent"),),
+    )
+    client = FakeClient()
+
+    run(one_hop(
+        client,
+        NodeContext(element_id="n0", label="Organization"),
+        [candidate("r0", "n1", label="Patent", rel_type="APPLIED_FOR")],
+        FreeTextGoal(goal="find a patent"),
+        config=NavigatorConfig(schema=schema),
+    ))
+
+    assert client.calls[0].state["graph_schema"] == {
+        "labels": ["Organization", "Patent"],
+        "relationship_types": ["APPLIED_FOR"],
+        "topology": [{"from": "Organization", "relationship": "APPLIED_FOR", "to": "Patent"}],
+    }
+
+
+def test_state_omits_graph_schema_when_not_configured():
+    client = FakeClient()
+
+    run(one_hop(client, NodeContext(element_id="n0"), [], FreeTextGoal(goal="anything")))
+
+    assert "graph_schema" not in client.calls[0].state
+
+
 def test_current_node_state_leads_with_the_labels_display_properties():
     remember_display_properties("Company", ("name",), database="db")
     client = FakeClient()

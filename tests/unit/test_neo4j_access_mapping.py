@@ -4,6 +4,7 @@ record-parsing paths of Neo4jAccess driven by a fake driver (no network)."""
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import neo4j
 import pytest
@@ -839,3 +840,62 @@ def test_open_access_without_settings_tolerates_a_missing_typesafe_key(monkeypat
 
     assert fake_driver.verified == 1
     assert fake_driver.closed is True
+
+
+# --------------------------------------------------------------------------
+# graph_schema
+# --------------------------------------------------------------------------
+
+
+def test_graph_schema_maps_labels_types_and_topology_triples():
+    nodes = {
+        "n1": SimpleNamespace(element_id="n1", labels=["Organization"]),
+        "n2": SimpleNamespace(element_id="n2", labels=["Patent"]),
+        "n3": SimpleNamespace(element_id="n3", labels=["Article"]),
+    }
+    rels = [
+        SimpleNamespace(type="APPLIED_FOR", start_node=nodes["n1"], end_node=nodes["n2"]),
+        SimpleNamespace(type="ASSIGNED", start_node=nodes["n1"], end_node=nodes["n2"]),
+        SimpleNamespace(type="HAS_CHUNK", start_node=nodes["n3"], end_node=nodes["n3"]),
+    ]
+
+    def handler(query, params):
+        if "db.labels" in query:
+            return [{"label": "Patent"}, {"label": "Organization"}, {"label": "Article"}]
+        if "db.relationshipTypes" in query:
+            return [{"relationshipType": t} for t in ("HAS_CHUNK", "APPLIED_FOR", "ASSIGNED")]
+        if "db.schema.visualization" in query:
+            return [{"nodes": list(nodes.values()), "relationships": rels}]
+        raise AssertionError(f"unexpected query: {query}")
+
+    schema = _access(handler).graph_schema()
+
+    assert schema.labels == ("Article", "Organization", "Patent")
+    assert schema.relationship_types == ("APPLIED_FOR", "ASSIGNED", "HAS_CHUNK")
+    assert schema.relationships == (
+        ("Article", "HAS_CHUNK", "Article"),
+        ("Organization", "APPLIED_FOR", "Patent"),
+        ("Organization", "ASSIGNED", "Patent"),
+    )
+    assert schema.as_prompt()["topology"][0] == {
+        "from": "Article",
+        "relationship": "HAS_CHUNK",
+        "to": "Article",
+    }
+
+
+def test_graph_schema_falls_back_to_labels_and_types_when_visualization_is_unavailable():
+    import neo4j
+
+    def handler(query, params):
+        if "db.labels" in query:
+            return [{"label": "Organization"}]
+        if "db.relationshipTypes" in query:
+            return [{"relationshipType": "APPLIED_FOR"}]
+        raise neo4j.exceptions.Neo4jError("no such procedure")
+
+    schema = _access(handler).graph_schema()
+
+    assert schema.labels == ("Organization",)
+    assert schema.relationship_types == ("APPLIED_FOR",)
+    assert schema.relationships == ()
